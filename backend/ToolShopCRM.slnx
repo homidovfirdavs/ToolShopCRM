@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ToolShop.API/ToolShop.API.csproj" />
+  <Project Path="ToolShop.Domain/ToolShop.Domain.csproj" />
+  <Project Path="ToolShop.Infrastructure/ToolShop.Infrastructure.csproj" />
+</Solution>

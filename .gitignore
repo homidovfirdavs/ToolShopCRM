@@ -1,0 +1,30 @@
+# .NET
+bin/
+obj/
+*.user
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Environment & secrets
+*.env
+.env.*
+appsettings.Production.json
+appsettings.*.local.json
+
+# IDE
+.vs/
+.vscode/
+*.suo
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
