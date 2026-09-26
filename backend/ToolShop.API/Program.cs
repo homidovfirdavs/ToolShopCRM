@@ -8,6 +8,7 @@ using ToolShop.Infrastructure.Auth;
 using ToolShop.Infrastructure.Identity;
 using ToolShop.Infrastructure.Persistence;
 using Scalar.AspNetCore;
+using ToolShop.Domain.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,10 +21,29 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+const string FrontendCorsPolicy = "FrontendCorsPolicy";
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(FrontendCorsPolicy, policy =>
+    {
+        policy.WithOrigins("http://localhost:5173")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
+
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
     options.Password.RequiredLength = 6;
     options.Password.RequireNonAlphanumeric = false;
+
+    // Login protection (brute-force lockout)
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.AllowedForNewUsers = true;
 })
     .AddEntityFrameworkStores<AppDbContext>()
     .AddDefaultTokenProviders();
@@ -55,11 +75,21 @@ builder.Services.AddAuthentication(options =>
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    foreach (var permission in typeof(Permissions)
+        .GetFields()
+        .Where(f => f.IsLiteral && f.FieldType == typeof(string)))
+    {
+        var value = (string)permission.GetValue(null)!;
+        options.AddPolicy(value, policy =>
+            policy.RequireClaim("permission", value));
+    }
+});
 
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<RefreshTokenService>();
-
+builder.Services.AddScoped<ToolShop.Infrastructure.Audit.AuditService>();
 var app = builder.Build();
 
 // --- Middleware pipeline ---
@@ -72,8 +102,11 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseCors(FrontendCorsPolicy);
+
 app.UseAuthentication();
 app.UseAuthorization();
+
 
 app.MapControllers();
 

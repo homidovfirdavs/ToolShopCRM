@@ -12,18 +12,24 @@ namespace ToolShop.API.Controllers;
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
-    private readonly UserManager<ApplicationUser> _userManager;
+        private readonly UserManager<ApplicationUser> _userManager;
+    private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly TokenService _tokenService;
     private readonly RefreshTokenService _refreshTokenService;
+    private readonly ToolShop.Infrastructure.Audit.AuditService _auditService;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
+        SignInManager<ApplicationUser> signInManager,
         TokenService tokenService,
-        RefreshTokenService refreshTokenService)
+        RefreshTokenService refreshTokenService,
+        ToolShop.Infrastructure.Audit.AuditService auditService)
     {
         _userManager = userManager;
+        _signInManager = signInManager;
         _tokenService = tokenService;
         _refreshTokenService = refreshTokenService;
+        _auditService = auditService;
     }
 
     [HttpPost("login")]
@@ -42,8 +48,14 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid username/email or password." });
         }
 
-        var passwordValid = await _userManager.CheckPasswordAsync(user, request.Password);
-        if (!passwordValid)
+                var signInResult = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
+
+        if (signInResult.IsLockedOut)
+        {
+            return Unauthorized(new { message = "Account temporarily locked due to multiple failed attempts. Try again later." });
+        }
+
+        if (!signInResult.Succeeded)
         {
             return Unauthorized(new { message = "Invalid username/email or password." });
         }
@@ -66,6 +78,13 @@ public class AuthController : ControllerBase
                 Roles = [.. roles]
             }
         };
+
+    await _auditService.LogAsync(
+            user.Id,
+            "Login",
+            description: $"User '{user.UserName}' logged in.",
+            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString());
+
 
         return Ok(response);
     }

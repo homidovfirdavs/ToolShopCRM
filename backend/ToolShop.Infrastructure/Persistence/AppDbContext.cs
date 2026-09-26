@@ -12,6 +12,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     }
 
 public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
 protected override void OnModelCreating(ModelBuilder builder)
 {
@@ -28,5 +29,6 @@ protected override void OnModelCreating(ModelBuilder builder)
 
     // DbSet-ҳои entity-ҳои бизнес (Product, Customer, Order, ...)
     // дар Task-ҳои баъдӣ дар ин ҷо илова мешаванд.
+    //           Admin#2026Shefcha99@     Password Admin
 }
 }
