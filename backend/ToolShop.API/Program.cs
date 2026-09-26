@@ -16,8 +16,35 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    {
+        document.Components ??= new();
+        document.Components.SecuritySchemes = new Dictionary<string, Microsoft.OpenApi.IOpenApiSecurityScheme>
+        {
+            ["Bearer"] = new Microsoft.OpenApi.OpenApiSecurityScheme
+            {
+                Type = Microsoft.OpenApi.SecuritySchemeType.Http,
+                Scheme = "bearer",
+                BearerFormat = "JWT",
+                In = Microsoft.OpenApi.ParameterLocation.Header,
+                Description = "Enter your JWT access token."
+            }
+        };
 
+        foreach (var operation in document.Paths.Values.SelectMany(p => p.Operations))
+        {
+            operation.Value.Security ??= [];
+            operation.Value.Security.Add(new Microsoft.OpenApi.OpenApiSecurityRequirement
+            {
+                [new Microsoft.OpenApi.OpenApiSecuritySchemeReference("Bearer", document)] = []
+            });
+        }
+
+        return Task.CompletedTask;
+    });
+});
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
