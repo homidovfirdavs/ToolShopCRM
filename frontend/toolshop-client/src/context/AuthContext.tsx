@@ -5,7 +5,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import apiClient from "../api/client";
+import apiClient, { setAuthToken } from "../api/client";
 
 interface UserInfo {
   id: string;
@@ -44,7 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .post("/auth/refresh", { refreshToken: storedRefreshToken })
       .then((response) => {
         const { accessToken, refreshToken, user } = response.data;
-        setAccessToken(accessToken);
+                setAccessToken(accessToken);
+        setAuthToken(accessToken);
         setUser(user);
         sessionStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
       })
@@ -63,7 +64,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     const { accessToken, refreshToken, user } = response.data;
-    setAccessToken(accessToken);
+       setAccessToken(accessToken);
+    setAuthToken(accessToken);
     setUser(user);
     sessionStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
   }
@@ -81,8 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+        sessionStorage.removeItem(REFRESH_TOKEN_KEY);
     setAccessToken(null);
+    setAuthToken(null);
     setUser(null);
   }
 
