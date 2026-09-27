@@ -1,0 +1,154 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using ToolShop.API.DTOs.Catalog;
+using ToolShop.Domain.Entities.Catalog;
+using ToolShop.Infrastructure.Audit;
+using ToolShop.Infrastructure.Persistence;
+
+namespace ToolShop.API.Controllers;
+
+[ApiController]
+[Route("api/categories")]
+[Authorize]
+public class CategoriesController : ControllerBase
+{
+    private readonly AppDbContext _db;
+    private readonly AuditService _auditService;
+
+    public CategoriesController(AppDbContext db, AuditService auditService)
+    {
+        _db = db;
+        _auditService = auditService;
+    }
+
+    private static CategoryResponse ToResponse(Category c) => new()
+    {
+        Id = c.Id,
+        Name = c.Name,
+        Description = c.Description,
+        IsActive = c.IsActive,
+        CreatedAt = c.CreatedAt,
+        UpdatedAt = c.UpdatedAt
+    };
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll()
+    {
+        var categories = await _db.Categories
+            .AsNoTracking()
+            .OrderBy(c => c.Name)
+            .Select(c => ToResponse(c))
+            .ToListAsync();
+
+        return Ok(categories);
+    }
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetById(int id)
+    {
+        var category = await _db.Categories.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == id);
+
+        if (category is null)
+        {
+            return NotFound(new { message = "Category not found." });
+        }
+
+        return Ok(ToResponse(category));
+    }
+
+    [HttpPost]
+    [Authorize(Roles = "Admin,Manager")]
+    public async Task<IActionResult> Create([FromBody] CreateCategoryRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var name = request.Name.Trim();
+
+        var exists = await _db.Categories.AnyAsync(c => c.Name == name);
+        if (exists)
+        {
+            return Conflict(new { message = "A category with this name already exists." });
+        }
+
+        var category = new Category
+        {
+            Name = name,
+            Description = request.Description,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _db.Categories.Add(category);
+        await _db.SaveChangesAsync();
+
+        var userId = User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
+        await _auditService.LogAsync(userId, "Category.Create", "Category", category.Id.ToString(),
+            $"Category '{category.Name}' created.");
+
+        return CreatedAtAction(nameof(GetById), new { id = category.Id }, ToResponse(category));
+    }
+
+    [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
+    public async Task<IActionResult> Update(int id, [FromBody] UpdateCategoryRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var category = await _db.Categories.FirstOrDefaultAsync(c => c.Id == id);
+        if (category is null)
+        {
+            return NotFound(new { message = "Category not found." });
+        }
+
+        var name = request.Name.Trim();
+
+        var duplicate = await _db.Categories.AnyAsync(c => c.Name == name && c.Id != id);
+        if (duplicate)
+        {
+            return Conflict(new { message = "A category with this name already exists." });
+        }
+
+        category.Name = name;
+        category.Description = request.Description;
+        category.IsActive = request.IsActive;
+        category.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+
+        var userId = User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
+        await _auditService.LogAsync(userId, "Category.Update", "Category", category.Id.ToString(),
+            $"Category '{category.Name}' updated.");
+
+        return Ok(ToResponse(category));
+    }
+
+    [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
+    public async Task<IActionResult> Deactivate(int id)
+    {
+        var category = await _db.Categories.FirstOrDefaultAsync(c => c.Id == id);
+        if (category is null)
+        {
+            return NotFound(new { message = "Category not found." });
+        }
+
+        category.IsActive = false;
+        category.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+
+        var userId = User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
+        await _auditService.LogAsync(userId, "Category.Deactivate", "Category", category.Id.ToString(),
+            $"Category '{category.Name}' deactivated.");
+
+        return NoContent();
+    }
+}
