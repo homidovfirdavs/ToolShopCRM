@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.Domain.Entities;
+using ToolShop.Domain.Entities.Catalog;
 
 namespace ToolShop.Infrastructure.Persistence;
 
@@ -11,24 +12,59 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     {
     }
 
-public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
-public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
-protected override void OnModelCreating(ModelBuilder builder)
-{
-    base.OnModelCreating(builder);
+    public DbSet<Category> Categories => Set<Category>();
+    public DbSet<Brand> Brands => Set<Brand>();
+    public DbSet<Product> Products => Set<Product>();
 
-    builder.Entity<RefreshToken>(entity =>
+    protected override void OnModelCreating(ModelBuilder builder)
     {
-        entity.HasIndex(rt => rt.TokenHash).IsUnique();
-        entity.HasIndex(rt => rt.UserId);
-    });
+        base.OnModelCreating(builder);
 
-    // Identity table-ҳо (AspNetUsers, AspNetRoles, ...) худкор
-    // тавассути IdentityDbContext сохта мешаванд.
+        builder.Entity<RefreshToken>(entity =>
+        {
+            entity.HasIndex(rt => rt.TokenHash).IsUnique();
+            entity.HasIndex(rt => rt.UserId);
+        });
 
-    // DbSet-ҳои entity-ҳои бизнес (Product, Customer, Order, ...)
-    // дар Task-ҳои баъдӣ дар ин ҷо илова мешаванд.
-    
-}
+        builder.Entity<Category>(entity =>
+        {
+            entity.Property(c => c.Name).HasMaxLength(150).IsRequired();
+            entity.HasIndex(c => c.Name).IsUnique();
+        });
+
+        builder.Entity<Brand>(entity =>
+        {
+            entity.Property(b => b.Name).HasMaxLength(150).IsRequired();
+            entity.HasIndex(b => b.Name).IsUnique();
+        });
+
+        builder.Entity<Product>(entity =>
+        {
+            entity.Property(p => p.Name).HasMaxLength(200).IsRequired();
+            entity.Property(p => p.SKU).HasMaxLength(50).IsRequired();
+            entity.Property(p => p.Barcode).HasMaxLength(50);
+
+            entity.Property(p => p.PurchasePrice).HasPrecision(18, 2);
+            entity.Property(p => p.SalePrice).HasPrecision(18, 2);
+
+            entity.HasIndex(p => p.SKU).IsUnique();
+            entity.HasIndex(p => p.Barcode).IsUnique();
+
+            entity.HasOne(p => p.Category)
+                .WithMany()
+                .HasForeignKey(p => p.CategoryId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(p => p.Brand)
+                .WithMany()
+                .HasForeignKey(p => p.BrandId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Identity table-ҳо (AspNetUsers, AspNetRoles, ...) худкор
+        // тавассути IdentityDbContext сохта мешаванд.
+    }
 }
