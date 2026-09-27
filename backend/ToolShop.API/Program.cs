@@ -9,6 +9,7 @@ using ToolShop.Infrastructure.Identity;
 using ToolShop.Infrastructure.Persistence;
 using Scalar.AspNetCore;
 using ToolShop.Domain.Authorization;
+using ToolShop.API.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -117,9 +118,14 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<RefreshTokenService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Audit.AuditService>();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
 
 // --- Middleware pipeline ---
+
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
@@ -134,6 +140,8 @@ app.UseCors(FrontendCorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
+
+app.UseExceptionHandler();
 
 app.MapControllers();
 
