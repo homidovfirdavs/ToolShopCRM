@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.Domain.Entities;
 using ToolShop.Domain.Entities.Catalog;
+using ToolShop.Domain.Entities.Customers;
 
 namespace ToolShop.Infrastructure.Persistence;
 
@@ -17,8 +18,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Brand> Brands => Set<Brand>();
-    public DbSet<Product> Products => Set<Product>();
-
+       public DbSet<Product> Products => Set<Product>();
+    public DbSet<Customer> Customers => Set<Customer>();
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -62,6 +63,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .WithMany()
                 .HasForeignKey(p => p.BrandId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+                builder.Entity<Customer>(entity =>
+        {
+            entity.Property(c => c.Name).HasMaxLength(200).IsRequired();
+            entity.Property(c => c.Phone).HasMaxLength(30).IsRequired();
+            entity.Property(c => c.NormalizedPhone).HasMaxLength(30).IsRequired();
+            entity.Property(c => c.Address).HasMaxLength(300);
+            entity.Property(c => c.Notes).HasMaxLength(1000);
+
+            entity.HasIndex(c => c.NormalizedPhone).IsUnique();
+            entity.HasIndex(c => c.Name);
         });
 
         // Identity table-ҳо (AspNetUsers, AspNetRoles, ...) худкор
