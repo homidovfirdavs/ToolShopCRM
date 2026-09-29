@@ -30,11 +30,18 @@ export default function DashboardPage() {
           >
             Brands
           </Link>
-          <Link
+
+                    <Link
             to="/customers"
             className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
           >
             Customers
+          </Link>
+          <Link
+            to="/inventory"
+            className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
+          >
+            Inventory
           </Link>
         </div>
 

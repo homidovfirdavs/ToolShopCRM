@@ -10,12 +10,15 @@ import BrandsPage from "./pages/BrandsPage";
 import CustomersPage from "./pages/CustomersPage";
 import CustomerFormPage from "./pages/CustomerFormPage";
 import CustomerProfilePage from "./pages/CustomerProfilePage";
+import InventoryPage from "./pages/InventoryPage";
+import InventoryMovementsPage from "./pages/InventoryMovementsPage";
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <Routes>
+
           <Route path="/login" element={<LoginPage />} />
           <Route
             path="/dashboard"
@@ -97,7 +100,22 @@ function App() {
               </ProtectedRoute>
             }
           />
-
+          <Route
+            path="/inventory"
+            element={
+              <ProtectedRoute>
+                <InventoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/inventory/movements"
+            element={
+              <ProtectedRoute>
+                <InventoryMovementsPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </AuthProvider>

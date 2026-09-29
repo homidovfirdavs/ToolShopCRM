@@ -1,5 +1,7 @@
+
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   getCategories,
   getBrands,
@@ -9,6 +11,7 @@ import {
   type Category,
   type Brand,
 } from "../api/catalog";
+import { getSingleStock, type StockItem } from "../api/inventory";
 
 const emptyForm = {
   name: "",
@@ -37,6 +40,7 @@ export default function ProductFormPage() {
   const [isLoading, setIsLoading] = useState(isEdit);
   const [isSaving, setIsSaving] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
+    const [stock, setStock] = useState<StockItem | null>(null);
 
   useEffect(() => {
     getCategories().then(setCategories).catch(() => {});
@@ -66,6 +70,13 @@ export default function ProductFormPage() {
       .catch(() => setGeneralError("Failed to load product."))
       .finally(() => setIsLoading(false));
   }, [id, isEdit]);
+  useEffect(() => {
+    if (!isEdit || !id) return;
+    getSingleStock(Number(id))
+      .then(setStock)
+      .catch(() => {});
+  }, [id, isEdit]);
+
 
   function validate(): boolean {
     const newErrors: Record<string, string> = {};
@@ -340,7 +351,7 @@ export default function ProductFormPage() {
             />
           </div>
 
-          {isEdit && (
+                    {isEdit && (
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
@@ -351,6 +362,24 @@ export default function ProductFormPage() {
               />
               Active
             </label>
+          )}
+
+          {isEdit && stock && (
+            <div className="border-t border-gray-100 pt-4 mt-2">
+              <h2 className="text-sm font-semibold text-gray-700 mb-2">
+                Inventory
+              </h2>
+              <p className="text-sm text-gray-600">
+                Current Stock: <strong>{stock.currentStock}</strong> | Minimum:{" "}
+                {stock.minimumStockLevel} | Status: {stock.status}
+              </p>
+              <Link
+                to="/inventory/movements"
+                className="text-blue-600 hover:underline text-sm"
+              >
+                View Movements
+              </Link>
+            </div>
           )}
 
           <div className="flex gap-3 pt-2">
