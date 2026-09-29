@@ -207,7 +207,7 @@ public class PurchasesController : ControllerBase
             PurchaseNumber = purchaseNumber,
             SupplierId = request.SupplierId,
             Status = PurchaseStatus.Draft,
-            PurchaseDate = request.PurchaseDate,
+                        PurchaseDate = DateTime.SpecifyKind(request.PurchaseDate, DateTimeKind.Utc),
             Notes = request.Notes,
             Subtotal = subtotal,
             DiscountAmount = request.DiscountAmount,
@@ -279,7 +279,7 @@ public class PurchasesController : ControllerBase
         }
 
         purchase.SupplierId = request.SupplierId;
-        purchase.PurchaseDate = request.PurchaseDate;
+                purchase.PurchaseDate = DateTime.SpecifyKind(request.PurchaseDate, DateTimeKind.Utc);
         purchase.Notes = request.Notes;
         purchase.Subtotal = subtotal;
         purchase.DiscountAmount = request.DiscountAmount;
