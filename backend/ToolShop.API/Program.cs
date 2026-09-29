@@ -118,6 +118,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<RefreshTokenService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Audit.AuditService>();
+builder.Services.AddScoped<ToolShop.Infrastructure.Inventory.InventoryService>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
