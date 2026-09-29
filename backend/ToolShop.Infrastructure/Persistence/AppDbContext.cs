@@ -4,7 +4,7 @@ using ToolShop.Domain.Entities;
 using ToolShop.Domain.Entities.Catalog;
 using ToolShop.Domain.Entities.Customers;
 using ToolShop.Domain.Entities.Inventory;
-
+using ToolShop.Domain.Entities.Purchases;
 namespace ToolShop.Infrastructure.Persistence;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
@@ -22,7 +22,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
        public DbSet<Product> Products => Set<Product>();
     public DbSet<Customer> Customers => Set<Customer>();
 
-    public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
+        public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
+    public DbSet<Supplier> Suppliers => Set<Supplier>();
+    public DbSet<Purchase> Purchases => Set<Purchase>();
+    public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -95,6 +98,58 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(m => m.Product)
                 .WithMany()
                 .HasForeignKey(m => m.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+                builder.Entity<Supplier>(entity =>
+        {
+            entity.Property(s => s.Name).HasMaxLength(200).IsRequired();
+            entity.Property(s => s.ContactPerson).HasMaxLength(150);
+            entity.Property(s => s.Phone).HasMaxLength(30);
+            entity.Property(s => s.Email).HasMaxLength(200);
+            entity.Property(s => s.Address).HasMaxLength(300);
+            entity.Property(s => s.Notes).HasMaxLength(1000);
+
+            entity.HasIndex(s => s.Name);
+        });
+
+        builder.Entity<Purchase>(entity =>
+        {
+            entity.Property(p => p.PurchaseNumber).HasMaxLength(20).IsRequired();
+            entity.Property(p => p.Notes).HasMaxLength(1000);
+            entity.Property(p => p.Subtotal).HasPrecision(18, 2);
+            entity.Property(p => p.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(p => p.TotalAmount).HasPrecision(18, 2);
+            entity.Property(p => p.CreatedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(p => p.ConfirmedByUserId).HasMaxLength(450);
+
+            entity.HasIndex(p => p.PurchaseNumber).IsUnique();
+            entity.HasIndex(p => p.SupplierId);
+            entity.HasIndex(p => p.PurchaseDate);
+            entity.HasIndex(p => p.Status);
+
+            entity.HasOne(p => p.Supplier)
+                .WithMany()
+                .HasForeignKey(p => p.SupplierId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<PurchaseItem>(entity =>
+        {
+            entity.Property(i => i.UnitCost).HasPrecision(18, 2);
+            entity.Property(i => i.LineTotal).HasPrecision(18, 2);
+
+            entity.HasIndex(i => i.PurchaseId);
+            entity.HasIndex(i => i.ProductId);
+
+            entity.HasOne(i => i.Purchase)
+                .WithMany(p => p.Items)
+                .HasForeignKey(i => i.PurchaseId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(i => i.Product)
+                .WithMany()
+                .HasForeignKey(i => i.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
