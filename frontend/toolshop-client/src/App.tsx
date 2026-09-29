@@ -7,6 +7,9 @@ import ProductsPage from "./pages/ProductsPage";
 import ProductFormPage from "./pages/ProductFormPage";
 import CategoriesPage from "./pages/CategoriesPage";
 import BrandsPage from "./pages/BrandsPage";
+import CustomersPage from "./pages/CustomersPage";
+import CustomerFormPage from "./pages/CustomerFormPage";
+import CustomerProfilePage from "./pages/CustomerProfilePage";
 
 function App() {
   return (
@@ -62,6 +65,39 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/customers"
+            element={
+              <ProtectedRoute>
+                <CustomersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/customers/new"
+            element={
+              <ProtectedRoute>
+                <CustomerFormPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/customers/:id/edit"
+            element={
+              <ProtectedRoute>
+                <CustomerFormPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/customers/:id"
+            element={
+              <ProtectedRoute>
+                <CustomerProfilePage />
+              </ProtectedRoute>
+            }
+          />
+
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </AuthProvider>
