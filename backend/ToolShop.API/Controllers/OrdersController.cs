@@ -376,4 +376,45 @@ public class OrdersController : ControllerBase
 
         return NoContent();
     }
+    [HttpGet("{id:int}/payments")]
+    public async Task<IActionResult> GetPayments(int id)
+    {
+        var order = await _db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id);
+        if (order is null) return NotFound(new { message = "Order not found." });
+
+        var payments = await _db.Payments.AsNoTracking()
+            .Where(p => p.OrderId == id)
+            .OrderByDescending(p => p.CreatedAt)
+            .ToListAsync();
+
+        var totalPaid = payments.Where(p => p.Status == Domain.Entities.Payments.PaymentStatus.Completed)
+            .Sum(p => p.Amount);
+        var outstanding = Math.Max(0, order.TotalAmount - totalPaid);
+
+        var userIds = payments.Select(p => p.ReceivedByUserId).Distinct().ToList();
+        var users = await _db.Users.Where(u => userIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.UserName }).ToListAsync();
+        var userLookup = users.ToDictionary(u => u.Id, u => u.UserName ?? "Unknown");
+
+        return Ok(new
+        {
+            orderTotal = order.TotalAmount,
+            totalPaid,
+            outstandingBalance = outstanding,
+            paymentState = totalPaid <= 0 ? "Unpaid" : totalPaid < order.TotalAmount ? "PartiallyPaid" : "Paid",
+            payments = payments.Select(p => new
+            {
+                p.Id,
+                p.PaymentNumber,
+                p.CreatedAt,
+                p.Amount,
+                p.Method,
+                p.Status,
+                p.ReferenceNumber,
+                receivedByUsername = userLookup.GetValueOrDefault(p.ReceivedByUserId, "Unknown")
+            })
+        });
+    }
+
+
 }

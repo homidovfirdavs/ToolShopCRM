@@ -1,3 +1,4 @@
+using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Sales;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -260,4 +261,76 @@ public class CustomersController : ControllerBase
         return Ok(new { items, page, pageSize, totalItems, totalPages });
     }
 
+    [HttpGet("{id:int}/payments")]
+    public async Task<IActionResult> GetPayments(int id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var customerExists = await _db.Customers.AnyAsync(c => c.Id == id);
+        if (!customerExists) return NotFound(new { message = "Customer not found." });
+
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 20;
+        if (pageSize > 100) pageSize = 100;
+
+        var query = _db.Payments.Include(p => p.Order).AsNoTracking()
+            .Where(p => p.CustomerId == id)
+            .OrderByDescending(p => p.CreatedAt);
+
+        var totalItems = await query.CountAsync();
+        var totalPages = (int)Math.Ceiling(totalItems / (double)pageSize);
+
+        var payments = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+
+        var userIds = payments.Select(p => p.ReceivedByUserId).Distinct().ToList();
+        var users = await _db.Users.Where(u => userIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.UserName }).ToListAsync();
+        var userLookup = users.ToDictionary(u => u.Id, u => u.UserName ?? "Unknown");
+
+        var items = payments.Select(p => new
+        {
+            p.Id,
+            p.PaymentNumber,
+            orderNumber = p.Order.OrderNumber,
+            p.CreatedAt,
+            p.Amount,
+            p.Method,
+            p.Status,
+            receivedByUsername = userLookup.GetValueOrDefault(p.ReceivedByUserId, "Unknown")
+        });
+
+        return Ok(new { items, page, pageSize, totalItems, totalPages });
+    }
+
+    [HttpGet("{id:int}/outstanding-orders")]
+    public async Task<IActionResult> GetOutstandingOrders(int id, [FromServices] Infrastructure.Payments.PaymentService paymentService)
+    {
+        var customerExists = await _db.Customers.AnyAsync(c => c.Id == id);
+        if (!customerExists) return NotFound(new { message = "Customer not found." });
+
+        var orders = await _db.Orders.AsNoTracking()
+            .Where(o => o.CustomerId == id && o.Status == Domain.Entities.Sales.OrderStatus.Completed)
+            .OrderByDescending(o => o.OrderDate)
+            .ToListAsync();
+
+        var result = new List<object>();
+        foreach (var order in orders)
+        {
+            var outstanding = await paymentService.GetOrderOutstandingBalanceAsync(order.Id);
+            if (outstanding > 0)
+            {
+                var paid = order.TotalAmount - outstanding;
+                result.Add(new
+                {
+                    orderId = order.Id,
+                    orderNumber = order.OrderNumber,
+                    orderDate = order.OrderDate,
+                    total = order.TotalAmount,
+                    paid,
+                    outstanding,
+                    paymentState = paid <= 0 ? "Unpaid" : "PartiallyPaid"
+                });
+            }
+        }
+
+        return Ok(result);
+    }
 }
