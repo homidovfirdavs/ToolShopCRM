@@ -1,3 +1,4 @@
+using ToolShop.Domain.Entities.Sales;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -227,4 +228,36 @@ public class CustomersController : ControllerBase
 
         return NoContent();
     }
+    [HttpGet("{id:int}/orders")]
+    public async Task<IActionResult> GetOrders(int id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var customerExists = await _db.Customers.AnyAsync(c => c.Id == id);
+        if (!customerExists) return NotFound(new { message = "Customer not found." });
+
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 20;
+        if (pageSize > 100) pageSize = 100;
+
+        var query = _db.Orders.AsNoTracking().Where(o => o.CustomerId == id)
+            .OrderByDescending(o => o.OrderDate);
+
+        var totalItems = await query.CountAsync();
+        var totalPages = (int)Math.Ceiling(totalItems / (double)pageSize);
+
+        var items = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(o => new
+            {
+                o.Id,
+                o.OrderNumber,
+                o.OrderDate,
+                o.Status,
+                o.TotalAmount
+            })
+            .ToListAsync();
+
+        return Ok(new { items, page, pageSize, totalItems, totalPages });
+    }
+
 }

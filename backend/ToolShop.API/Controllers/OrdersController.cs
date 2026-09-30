@@ -1,0 +1,379 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using ToolShop.API.DTOs.Catalog;
+using ToolShop.API.DTOs.Sales;
+using ToolShop.Domain.Entities.Sales;
+using ToolShop.Infrastructure.Audit;
+using ToolShop.Infrastructure.Persistence;
+using ToolShop.Infrastructure.Sales;
+
+namespace ToolShop.API.Controllers;
+
+[ApiController]
+[Route("api/orders")]
+[Authorize]
+public class OrdersController : ControllerBase
+{
+    private readonly AppDbContext _db;
+    private readonly OrderService _orderService;
+    private readonly AuditService _auditService;
+    private const int MaxPageSize = 100;
+
+    public OrdersController(AppDbContext db, OrderService orderService, AuditService auditService)
+    {
+        _db = db;
+        _orderService = orderService;
+        _auditService = auditService;
+    }
+
+    private string? CurrentUserId =>
+        User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
+
+    private async Task<OrderResponse> ToResponseAsync(Order o)
+    {
+        var userIds = new List<string> { o.CreatedByUserId };
+        if (o.CompletedByUserId is not null) userIds.Add(o.CompletedByUserId);
+
+        var users = await _db.Users.Where(u => userIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.UserName }).ToListAsync();
+        var userLookup = users.ToDictionary(u => u.Id, u => u.UserName ?? "Unknown");
+
+        return new OrderResponse
+        {
+            Id = o.Id,
+            OrderNumber = o.OrderNumber,
+            CustomerId = o.CustomerId,
+            CustomerName = o.Customer?.Name ?? "Walk-in Customer",
+            Status = o.Status,
+            OrderDate = o.OrderDate,
+            Notes = o.Notes,
+            Subtotal = o.Subtotal,
+            DiscountAmount = o.DiscountAmount,
+            TotalAmount = o.TotalAmount,
+            Items = o.Items.Select(i => new OrderItemResponse
+            {
+                Id = i.Id,
+                ProductId = i.ProductId,
+                ProductName = i.Product.Name,
+                SKU = i.Product.SKU,
+                Barcode = i.Product.Barcode,
+                Quantity = i.Quantity,
+                UnitPrice = i.UnitPrice,
+                DiscountAmount = i.DiscountAmount,
+                LineTotal = i.LineTotal
+            }).ToList(),
+            CreatedByUsername = userLookup.GetValueOrDefault(o.CreatedByUserId, "Unknown"),
+            CompletedByUsername = o.CompletedByUserId is not null
+                ? userLookup.GetValueOrDefault(o.CompletedByUserId, "Unknown")
+                : null,
+            CreatedAt = o.CreatedAt,
+            CompletedAt = o.CompletedAt,
+            CancelledAt = o.CancelledAt
+        };
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll(
+        [FromQuery] string? search,
+        [FromQuery] OrderStatus? status,
+        [FromQuery] int? customerId,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        [FromQuery] string? sortBy,
+        [FromQuery] string? sortDirection,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 20;
+        if (pageSize > MaxPageSize) pageSize = MaxPageSize;
+
+        var query = _db.Orders.Include(o => o.Customer).AsNoTracking().AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLower();
+            query = query.Where(o =>
+                o.OrderNumber.ToLower().Contains(term) ||
+                (o.Customer != null && o.Customer.Name.ToLower().Contains(term)) ||
+                (o.Customer != null && o.Customer.Phone.Contains(term)));
+        }
+
+        if (status.HasValue) query = query.Where(o => o.Status == status.Value);
+        if (customerId.HasValue) query = query.Where(o => o.CustomerId == customerId.Value);
+        if (fromDate.HasValue) query = query.Where(o => o.OrderDate >= fromDate.Value);
+        if (toDate.HasValue) query = query.Where(o => o.OrderDate <= toDate.Value);
+
+        var descending = string.Equals(sortDirection, "desc", StringComparison.OrdinalIgnoreCase) || sortBy is null;
+
+        query = sortBy?.ToLower() switch
+        {
+            "totalamount" => descending ? query.OrderByDescending(o => o.TotalAmount) : query.OrderBy(o => o.TotalAmount),
+            "orderdate" => descending ? query.OrderByDescending(o => o.OrderDate) : query.OrderBy(o => o.OrderDate),
+            _ => query.OrderByDescending(o => o.CreatedAt),
+        };
+
+        var totalItems = await query.CountAsync();
+        var totalPages = (int)Math.Ceiling(totalItems / (double)pageSize);
+
+        var orders = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+
+        var userIds = orders.Select(o => o.CreatedByUserId).Distinct().ToList();
+        var users = await _db.Users.Where(u => userIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.UserName }).ToListAsync();
+        var userLookup = users.ToDictionary(u => u.Id, u => u.UserName ?? "Unknown");
+
+        var items = orders.Select(o => new OrderListItemResponse
+        {
+            Id = o.Id,
+            OrderNumber = o.OrderNumber,
+            CustomerName = o.Customer?.Name ?? "Walk-in Customer",
+            OrderDate = o.OrderDate,
+            Status = o.Status,
+            TotalAmount = o.TotalAmount,
+            CreatedByUsername = userLookup.GetValueOrDefault(o.CreatedByUserId, "Unknown")
+        }).ToList();
+
+        return Ok(new PagedResult<OrderListItemResponse>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            TotalItems = totalItems,
+            TotalPages = totalPages
+        });
+    }
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetById(int id)
+    {
+        var order = await _db.Orders
+            .Include(o => o.Customer)
+            .Include(o => o.Items).ThenInclude(i => i.Product)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.Id == id);
+
+        if (order is null) return NotFound(new { message = "Order not found." });
+
+        return Ok(await ToResponseAsync(order));
+    }
+
+    private async Task<(bool Ok, IActionResult? Error, List<OrderItem> Items, decimal Subtotal)> BuildItemsAsync(
+        List<OrderItemRequest> requestItems)
+    {
+        var productIds = requestItems.Select(i => i.ProductId).Distinct().ToList();
+        var products = await _db.Products.Where(p => productIds.Contains(p.Id)).ToListAsync();
+
+        if (products.Count != productIds.Count)
+        {
+            return (false, BadRequest(new { message = "One or more products do not exist." }), [], 0);
+        }
+
+        var inactive = products.FirstOrDefault(p => !p.IsActive);
+        if (inactive is not null)
+        {
+            return (false, BadRequest(new { message = $"Product '{inactive.Name}' is not active." }), [], 0);
+        }
+
+        decimal subtotal = 0;
+        var items = new List<OrderItem>();
+
+        foreach (var reqItem in requestItems)
+        {
+            var product = products.First(p => p.Id == reqItem.ProductId);
+            var baseTotal = reqItem.Quantity * product.SalePrice;
+            var lineTotal = Math.Max(0, baseTotal - reqItem.DiscountAmount);
+            subtotal += lineTotal;
+
+            items.Add(new OrderItem
+            {
+                ProductId = product.Id,
+                Quantity = reqItem.Quantity,
+                UnitPrice = product.SalePrice, // server-side snapshot, never trust client price
+                DiscountAmount = reqItem.DiscountAmount,
+                LineTotal = lineTotal
+            });
+        }
+
+        return (true, null, items, subtotal);
+    }
+
+    [HttpPost]
+    [Authorize(Roles = "Admin,Manager,Cashier")]
+    public async Task<IActionResult> Create([FromBody] CreateOrderRequest request)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        if (request.CustomerId.HasValue)
+        {
+            var customerExists = await _db.Customers.AnyAsync(c => c.Id == request.CustomerId.Value);
+            if (!customerExists) return BadRequest(new { message = "Customer does not exist." });
+        }
+
+        var (ok, error, items, subtotal) = await BuildItemsAsync(request.Items);
+        if (!ok) return error!;
+
+        if (request.DiscountAmount > subtotal)
+        {
+            return BadRequest(new { message = "Discount cannot exceed subtotal." });
+        }
+
+        var orderNumber = await OrderNumberGenerator.GenerateAsync(_db);
+
+        var order = new Order
+        {
+            OrderNumber = orderNumber,
+            CustomerId = request.CustomerId,
+            Status = OrderStatus.Draft,
+            OrderDate = DateTime.UtcNow,
+            Notes = request.Notes,
+            Subtotal = subtotal,
+            DiscountAmount = request.DiscountAmount,
+            TotalAmount = Math.Max(0, subtotal - request.DiscountAmount),
+            CreatedByUserId = CurrentUserId!,
+            CreatedAt = DateTime.UtcNow,
+            Items = items
+        };
+
+        _db.Orders.Add(order);
+        await _db.SaveChangesAsync();
+
+        await _auditService.LogAsync(CurrentUserId, "Order.Create", "Order", order.Id.ToString(),
+            $"Order {order.OrderNumber} created (Draft), total {order.TotalAmount}.");
+
+        var created = await _db.Orders
+            .Include(o => o.Customer)
+            .Include(o => o.Items).ThenInclude(i => i.Product)
+            .FirstAsync(o => o.Id == order.Id);
+
+        return CreatedAtAction(nameof(GetById), new { id = order.Id }, await ToResponseAsync(created));
+    }
+
+    [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin,Manager,Cashier")]
+    public async Task<IActionResult> Update(int id, [FromBody] UpdateOrderRequest request)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        var order = await _db.Orders.Include(o => o.Items).FirstOrDefaultAsync(o => o.Id == id);
+        if (order is null) return NotFound(new { message = "Order not found." });
+
+        if (order.Status != OrderStatus.Draft)
+        {
+            return Conflict(new { message = "Only draft orders can be edited." });
+        }
+
+        if (request.CustomerId.HasValue)
+        {
+            var customerExists = await _db.Customers.AnyAsync(c => c.Id == request.CustomerId.Value);
+            if (!customerExists) return BadRequest(new { message = "Customer does not exist." });
+        }
+
+        var (ok, error, items, subtotal) = await BuildItemsAsync(request.Items);
+        if (!ok) return error!;
+
+        if (request.DiscountAmount > subtotal)
+        {
+            return BadRequest(new { message = "Discount cannot exceed subtotal." });
+        }
+
+        _db.OrderItems.RemoveRange(order.Items);
+
+        order.CustomerId = request.CustomerId;
+        order.Notes = request.Notes;
+        order.Subtotal = subtotal;
+        order.DiscountAmount = request.DiscountAmount;
+        order.TotalAmount = Math.Max(0, subtotal - request.DiscountAmount);
+        order.Items = items;
+
+        await _db.SaveChangesAsync();
+
+        await _auditService.LogAsync(CurrentUserId, "Order.Update", "Order", order.Id.ToString(),
+            $"Order {order.OrderNumber} updated.");
+
+        var updated = await _db.Orders
+            .Include(o => o.Customer)
+            .Include(o => o.Items).ThenInclude(i => i.Product)
+            .FirstAsync(o => o.Id == order.Id);
+
+        return Ok(await ToResponseAsync(updated));
+    }
+
+    [HttpPost("{id:int}/complete")]
+    [Authorize(Roles = "Admin,Manager,Cashier")]
+    public async Task<IActionResult> Complete(int id)
+    {
+        try
+        {
+            var order = await _orderService.CompleteAsync(id, CurrentUserId!);
+
+            await _auditService.LogAsync(CurrentUserId, "Order.Complete", "Order", order.Id.ToString(),
+                $"Order {order.OrderNumber} completed. Total: {order.TotalAmount}, Items: {order.Items.Count}.");
+
+            var completed = await _db.Orders
+                .Include(o => o.Customer)
+                .Include(o => o.Items).ThenInclude(i => i.Product)
+                .AsNoTracking()
+                .FirstAsync(o => o.Id == id);
+
+            return Ok(await ToResponseAsync(completed));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Order not found." });
+        }
+        catch (OrderAlreadyCompletedException)
+        {
+            return Conflict(new { message = "Order has already been completed or is not a draft." });
+        }
+        catch (InsufficientStockForSaleException ex)
+        {
+            return Conflict(new
+            {
+                message = "Insufficient stock for one or more products.",
+                shortages = ex.Shortages.Select(s => new
+                {
+                    productId = s.ProductId,
+                    productName = s.ProductName,
+                    available = s.Available,
+                    requested = s.Requested
+                })
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("{id:int}/cancel")]
+    [Authorize(Roles = "Admin,Manager,Cashier")]
+    public async Task<IActionResult> Cancel(int id)
+    {
+        var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == id);
+        if (order is null) return NotFound(new { message = "Order not found." });
+
+        if (order.Status == OrderStatus.Completed)
+        {
+            return Conflict(new
+            {
+                message = "Completed sale cannot be cancelled directly. Use a return/reversal workflow."
+            });
+        }
+
+        try
+        {
+            await _orderService.CancelDraftAsync(id);
+        }
+        catch (OrderNotDraftException)
+        {
+            return Conflict(new { message = "Only draft orders can be cancelled." });
+        }
+
+        await _auditService.LogAsync(CurrentUserId, "Order.Cancel", "Order", order.Id.ToString(),
+            $"Order {order.OrderNumber} cancelled.");
+
+        return NoContent();
+    }
+}
