@@ -1,3 +1,6 @@
+import PosPage from "./pages/PosPage";
+import OrdersPage from "./pages/OrdersPage";
+import OrderDetailsPage from "./pages/OrderDetailsPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import SupplierProfilePage from "./pages/SupplierProfilePage";
 import PurchasesPage from "./pages/PurchasesPage";
@@ -158,6 +161,30 @@ function App() {
             element={
               <ProtectedRoute>
                 <PurchaseDetailsPage />
+              </ProtectedRoute>
+            }
+          />
+                    <Route
+            path="/pos"
+            element={
+              <ProtectedRoute>
+                <PosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/orders"
+            element={
+              <ProtectedRoute>
+                <OrdersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/orders/:id"
+            element={
+              <ProtectedRoute>
+                <OrderDetailsPage />
               </ProtectedRoute>
             }
           />

@@ -11,7 +11,7 @@ export default function DashboardPage() {
         <p className="text-lg text-gray-700">Welcome, {user?.fullName}</p>
         <p className="text-gray-500 mb-6">Role: {user?.roles.join(", ")}</p>
 
-        <div className="flex justify-center gap-4 mb-6">
+        <div className="flex flex-wrap justify-center gap-4 mb-6">
           <Link
             to="/products"
             className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
@@ -24,20 +24,19 @@ export default function DashboardPage() {
           >
             Categories
           </Link>
-                    <Link
+          <Link
             to="/brands"
             className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
           >
             Brands
           </Link>
-
-                    <Link
+          <Link
             to="/customers"
             className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
           >
             Customers
           </Link>
-                    <Link
+          <Link
             to="/inventory"
             className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
           >
@@ -54,6 +53,18 @@ export default function DashboardPage() {
             className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
           >
             Purchases
+          </Link>
+          <Link
+            to="/pos"
+            className="bg-green-600 shadow rounded-lg px-6 py-4 hover:bg-green-700 transition text-white font-medium"
+          >
+            New Sale (POS)
+          </Link>
+          <Link
+            to="/orders"
+            className="bg-white shadow rounded-lg px-6 py-4 hover:shadow-md transition text-gray-800 font-medium"
+          >
+            Orders
           </Link>
         </div>
 
