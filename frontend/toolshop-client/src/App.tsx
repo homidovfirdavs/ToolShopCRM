@@ -1,3 +1,8 @@
+import SuppliersPage from "./pages/SuppliersPage";
+import SupplierProfilePage from "./pages/SupplierProfilePage";
+import PurchasesPage from "./pages/PurchasesPage";
+import PurchaseFormPage from "./pages/PurchaseFormPage";
+import PurchaseDetailsPage from "./pages/PurchaseDetailsPage";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -116,6 +121,48 @@ function App() {
               </ProtectedRoute>
             }
           />
+                    <Route
+            path="/suppliers"
+            element={
+              <ProtectedRoute>
+                <SuppliersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/suppliers/:id"
+            element={
+              <ProtectedRoute>
+                <SupplierProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/purchases"
+            element={
+              <ProtectedRoute>
+                <PurchasesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/purchases/new"
+            element={
+              <ProtectedRoute>
+                <PurchaseFormPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/purchases/:id"
+            element={
+              <ProtectedRoute>
+                <PurchaseDetailsPage />
+              </ProtectedRoute>
+            }
+          />
+
+
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </AuthProvider>
