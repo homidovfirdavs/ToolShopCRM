@@ -5,6 +5,7 @@ using ToolShop.Domain.Entities.Catalog;
 using ToolShop.Domain.Entities.Customers;
 using ToolShop.Domain.Entities.Inventory;
 using ToolShop.Domain.Entities.Purchases;
+using ToolShop.Domain.Entities.Sales;
 namespace ToolShop.Infrastructure.Persistence;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
@@ -25,7 +26,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     public DbSet<Purchase> Purchases => Set<Purchase>();
-    public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
+        public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -145,6 +149,48 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(i => i.Purchase)
                 .WithMany(p => p.Items)
                 .HasForeignKey(i => i.PurchaseId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(i => i.Product)
+                .WithMany()
+                .HasForeignKey(i => i.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+                builder.Entity<Order>(entity =>
+        {
+            entity.Property(o => o.OrderNumber).HasMaxLength(20).IsRequired();
+            entity.Property(o => o.Notes).HasMaxLength(1000);
+            entity.Property(o => o.Subtotal).HasPrecision(18, 2);
+            entity.Property(o => o.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(o => o.TotalAmount).HasPrecision(18, 2);
+            entity.Property(o => o.CreatedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(o => o.CompletedByUserId).HasMaxLength(450);
+
+            entity.HasIndex(o => o.OrderNumber).IsUnique();
+            entity.HasIndex(o => o.CustomerId);
+            entity.HasIndex(o => o.Status);
+            entity.HasIndex(o => o.OrderDate);
+            entity.HasIndex(o => o.CreatedByUserId);
+
+            entity.HasOne(o => o.Customer)
+                .WithMany()
+                .HasForeignKey(o => o.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<OrderItem>(entity =>
+        {
+            entity.Property(i => i.UnitPrice).HasPrecision(18, 2);
+            entity.Property(i => i.DiscountAmount).HasPrecision(18, 2);
+            entity.Property(i => i.LineTotal).HasPrecision(18, 2);
+
+            entity.HasIndex(i => i.OrderId);
+            entity.HasIndex(i => i.ProductId);
+
+            entity.HasOne(i => i.Order)
+                .WithMany(o => o.Items)
+                .HasForeignKey(i => i.OrderId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne(i => i.Product)
