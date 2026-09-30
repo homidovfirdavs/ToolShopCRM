@@ -6,6 +6,7 @@ using ToolShop.Domain.Entities.Customers;
 using ToolShop.Domain.Entities.Inventory;
 using ToolShop.Domain.Entities.Purchases;
 using ToolShop.Domain.Entities.Sales;
+using ToolShop.Domain.Entities.Payments;
 namespace ToolShop.Infrastructure.Persistence;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
@@ -29,6 +30,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<Payment> Payments => Set<Payment>();
 
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -196,6 +198,33 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(i => i.Product)
                 .WithMany()
                 .HasForeignKey(i => i.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+                builder.Entity<Payment>(entity =>
+        {
+            entity.Property(p => p.PaymentNumber).HasMaxLength(20).IsRequired();
+            entity.Property(p => p.Amount).HasPrecision(18, 2);
+            entity.Property(p => p.ReferenceNumber).HasMaxLength(100);
+            entity.Property(p => p.Notes).HasMaxLength(1000);
+            entity.Property(p => p.ReceivedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(p => p.VoidedByUserId).HasMaxLength(450);
+            entity.Property(p => p.VoidReason).HasMaxLength(500);
+
+            entity.HasIndex(p => p.PaymentNumber).IsUnique();
+            entity.HasIndex(p => p.OrderId);
+            entity.HasIndex(p => p.CustomerId);
+            entity.HasIndex(p => p.CreatedAt);
+            entity.HasIndex(p => p.Status);
+
+            entity.HasOne(p => p.Order)
+                .WithMany()
+                .HasForeignKey(p => p.OrderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(p => p.Customer)
+                .WithMany()
+                .HasForeignKey(p => p.CustomerId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
