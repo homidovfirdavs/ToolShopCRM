@@ -126,6 +126,7 @@ builder.Services.AddScoped<ToolShop.Infrastructure.Audit.AuditService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Inventory.InventoryService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Purchases.PurchaseService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Sales.OrderService>();
+builder.Services.AddScoped<ToolShop.Infrastructure.Payments.PaymentService>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
