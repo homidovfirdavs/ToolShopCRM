@@ -125,6 +125,7 @@ builder.Services.AddScoped<RefreshTokenService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Audit.AuditService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Inventory.InventoryService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Purchases.PurchaseService>();
+builder.Services.AddScoped<ToolShop.Infrastructure.Sales.OrderService>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
