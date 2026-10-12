@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")"
 OUT="${1:-.env}"
 [ -e "$OUT" ] && { echo "$OUT already exists - not touching it."; exit 1; }
-rnd() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$1"; }
+rnd() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c "$1"; }
 umask 077
 mkdir -p backups certs
 while IFS= read -r line; do

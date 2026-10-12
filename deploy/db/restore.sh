@@ -3,6 +3,8 @@
 # one (name ends with _test) when RECREATE=yes. To recover production: restore to a new name, check it, then
 # point DB_NAME at it (see docs). usage:  restore.sh <backup.dump> <new_database_name>
 set -eu
+# `docker compose exec` runs as root, which is not a database role: default to the owner account
+export PGUSER="${PGUSER:-${POSTGRES_USER:-postgres}}"
 FILE="${1:?backup file}"; TARGET="${2:?target database}"
 DIR="$(dirname "$0")"
 case "$TARGET" in *[!a-z0-9_]*|"") echo "target name: lowercase letters, digits, _ only"; exit 1;; esac
@@ -21,5 +23,10 @@ if [ -n "$exists" ]; then
 fi
 psql -d postgres -qc "CREATE DATABASE \"$TARGET\""
 pg_restore -d "$TARGET" --no-owner --no-privileges --exit-on-error "$FILE" || { echo "pg_restore failed - do not use $TARGET"; exit 1; }
-psql -v ON_ERROR_STOP=1 -q -d "$TARGET" -v app_user="${APP_DB_USER:-toolshop_app}" -v db="$TARGET" -f "$DIR/grants.sql"
+APP="${APP_DB_USER:-toolshop_app}"
+if [ -n "$(psql -d postgres -Atc "SELECT 1 FROM pg_roles WHERE rolname='$APP'")" ]; then
+  psql -v ON_ERROR_STOP=1 -q -d "$TARGET" -v app_user="$APP" -v db="$TARGET" -f "$DIR/grants.sql"
+else
+  echo "note: role $APP does not exist on this server - grants skipped (run migrate first)"
+fi
 echo "restored: $TARGET"

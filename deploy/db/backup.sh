@@ -2,6 +2,8 @@
 # Full logical backup (pg_dump custom format) + readability check + SHA-256. Runs inside a postgres container
 # (or anywhere with PG* env set). Read-only for the database.
 set -eu
+# `docker compose exec` runs as root, which is not a database role: default to the owner account
+export PGUSER="${PGUSER:-${POSTGRES_USER:-postgres}}"
 OUT="${BACKUP_DIR:-/backups}"
 DB="${PGDATABASE:-${POSTGRES_DB:?}}"
 [ -w "$OUT" ] || { echo "backup dir $OUT is not writable (Linux host: chown it to the postgres uid, see docs)"; exit 1; }

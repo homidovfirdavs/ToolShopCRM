@@ -8,11 +8,12 @@ P="-p toolshop-stg --env-file .env.staging"
 pass=0; fail=0
 ok()  { echo "PASS  $1"; pass=$((pass+1)); }
 bad() { echo "FAIL  $1"; fail=$((fail+1)); }
-chk() { d="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi; }
+chk() { d="$1"; shift; if out=$("$@" 2>&1); then ok "$d"; else bad "$d"; printf '%s\n' "$out" | tail -n 25 | sed 's/^/      | /'; fi; }
 
 [ -e .env.staging ] || { sh ./init-env.sh .env.staging >/dev/null; sed -i 's|^PUBLIC_ORIGIN=.*|PUBLIC_ORIGIN=https://localhost:8443|;s|^HTTP_PORT=.*|HTTP_PORT=8080|;s|^HTTPS_PORT=.*|HTTPS_PORT=8443|;s|^HSTS_MAX_AGE=.*|HSTS_MAX_AGE=0|' .env.staging; }
 [ -e certs/fullchain.pem ] || sh ./make-selfsigned-cert.sh localhost >/dev/null
 mkdir -p backups
+chmod 777 backups   # staging only: the postgres container user must be able to write here
 
 chk "docker compose config" docker compose $P config --quiet
 echo "building (first time takes several minutes) ..."
@@ -32,6 +33,7 @@ chk "app role is least-privilege (no DDL)" docker compose $P exec -T db sh -c 'p
 chk "backup + restore test (row counts of every table)" docker compose $P exec -T db sh /db/test-backup-restore.sh
 chk "data survives container restart (pgdata volume)" sh -c "docker compose $P restart db api >/dev/null && docker compose $P up -d --wait --wait-timeout 120"
 
+[ "$fail" -eq 0 ] || { echo; echo "---- container logs (last 60 lines each) ----"; docker compose $P logs --tail=60 2>&1; }
 echo; echo "RESULT: $pass passed, $fail failed"
 echo "Cleaning up the STAGING project only (toolshop-stg + its volumes)."
 docker compose $P down -v >/dev/null 2>&1

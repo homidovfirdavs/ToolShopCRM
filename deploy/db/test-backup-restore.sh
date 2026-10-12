@@ -2,6 +2,8 @@
 # Proves a backup is restorable: backup -> restore into <db>_restore_test -> compare row count of EVERY table
 # -> drop only that disposable database. Exit 0 = PASS. Stop writes (or accept differences) while it runs.
 set -eu
+# `docker compose exec` runs as root, which is not a database role: default to the owner account
+export PGUSER="${PGUSER:-${POSTGRES_USER:-postgres}}"
 DIR="$(dirname "$0")"
 SRC="${PGDATABASE:-${POSTGRES_DB:?}}"; DST="${SRC}_restore_test"
 counts() {
