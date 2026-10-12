@@ -98,6 +98,7 @@ public class PurchaseService
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "40001" && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
+                _db.ChangeTracker.Clear(); // drop half-applied entities so a retry cannot duplicate them
             }
             finally
             {

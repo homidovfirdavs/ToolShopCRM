@@ -12,6 +12,7 @@ dist-ssr/
 # Environment & secrets
 *.env
 .env.*
+!.env.example
 appsettings.Production.json
 appsettings.*.local.json
 
@@ -28,3 +29,15 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+# Backups and ad-hoc dumps (may contain business data / secrets)
+backups/
+*.dump
+*.dump.sha256
+_dump*.txt
+
+# Docker deployment (real secrets / certificates / backups never go to git)
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+deploy/certs/*
+!deploy/certs/.gitkeep

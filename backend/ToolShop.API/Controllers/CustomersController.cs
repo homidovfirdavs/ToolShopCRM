@@ -14,7 +14,7 @@ namespace ToolShop.API.Controllers;
 
 [ApiController]
 [Route("api/customers")]
-[Authorize]
+[Authorize(Roles = "Admin,Manager,Cashier")]
 public class CustomersController : ControllerBase
 {
     private readonly AppDbContext _db;

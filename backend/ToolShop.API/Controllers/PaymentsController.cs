@@ -14,7 +14,7 @@ namespace ToolShop.API.Controllers;
 
 [ApiController]
 [Route("api/payments")]
-[Authorize]
+[Authorize(Roles = "Admin,Manager,Cashier")]
 public class PaymentsController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -237,7 +237,7 @@ public class PaymentsController : ControllerBase
         if (pageSize < 1) pageSize = 20;
         if (pageSize > MaxPageSize) pageSize = MaxPageSize;
 
-        var customerQuery = _db.Customers.AsNoTracking().Where(c => c.IsActive).AsQueryable();
+        var customerQuery = _db.Customers.AsNoTracking().AsQueryable(); // inactive customers keep their debt (still owed)
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -246,47 +246,114 @@ public class PaymentsController : ControllerBase
                 c.Name.ToLower().Contains(term) || c.Phone.Contains(term));
         }
 
-        var customers = await customerQuery.ToListAsync();
+        // Set-based: one query for matching customers, one for their completed orders with paid sums.
+        // debt = Order.Total - valid (Completed) Payments, never stored.
+        var customers = await customerQuery
+            .Select(c => new { c.Id, c.Name, c.Phone, c.IsActive })
+            .ToListAsync();
+        var customerIds = customers.Select(c => c.Id).ToList();
 
-        var debtList = new List<object>();
-        foreach (var customer in customers)
-        {
-            var debt = await _paymentService.GetCustomerDebtAsync(customer.Id);
-            if (debt > 0)
+        var orderRows = await _db.Orders.AsNoTracking()
+            .Where(o => o.CustomerId != null && customerIds.Contains(o.CustomerId.Value)
+                        && o.Status == OrderStatus.Completed)
+            .Select(o => new
             {
-                                var outstandingOrderCount = await _db.Orders
-                    .Where(o => o.CustomerId == customer.Id && o.Status == OrderStatus.Completed)
-                    .CountAsync(o => (_db.Payments
-                        .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
-                        .Sum(p => (decimal?)p.Amount) ?? 0m) < o.TotalAmount);
-                var lastPurchase = await _db.Orders
-                    .Where(o => o.CustomerId == customer.Id && o.Status == OrderStatus.Completed)
-                    .OrderByDescending(o => o.OrderDate)
-                    .Select(o => (DateTime?)o.OrderDate)
-                    .FirstOrDefaultAsync();
+                CustomerId = o.CustomerId!.Value,
+                o.OrderDate,
+                o.TotalAmount,
+                Paid = _db.Payments
+                    .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
+                    .Sum(p => (decimal?)p.Amount) ?? 0m
+            })
+            .ToListAsync();
 
-                debtList.Add(new
+        var byCustomer = orderRows.GroupBy(r => r.CustomerId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var ordered = customers
+            .Select(c =>
+            {
+                var rows = byCustomer.GetValueOrDefault(c.Id) ?? [];
+                var debt = rows.Sum(r => Math.Max(0m, r.TotalAmount - r.Paid));
+                return new
                 {
-                    customerId = customer.Id,
-                    customerName = customer.Name,
-                    phone = customer.Phone,
-                    outstandingOrders = outstandingOrderCount,
+                    customerId = c.Id,
+                    customerName = c.Name,
+                    isActive = c.IsActive,
+                    phone = c.Phone,
+                    outstandingOrders = rows.Count(r => r.Paid < r.TotalAmount),
                     totalDebt = debt,
-                    lastPurchase
-                });
-            }
-        }
-
-        var ordered = debtList
-            .OrderByDescending(d => (decimal)d.GetType().GetProperty("totalDebt")!.GetValue(d)!)
+                    lastPurchase = rows.Count == 0 ? (DateTime?)null : rows.Max(r => r.OrderDate)
+                };
+            })
+            .Where(d => d.totalDebt > 0m)
+            .OrderByDescending(d => d.totalDebt)
             .ToList();
 
         var totalItems = ordered.Count;
         var totalPages = (int)Math.Ceiling(totalItems / (double)pageSize);
         var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
-        return Ok(new { items = pageItems, page, pageSize, totalItems, totalPages });
+        // Reconciliation only (not a debt line): completed walk-in orders (no customer) that still have an
+        // outstanding balance. Dashboard/Finance receivables include them; this list cannot (no customer to bill).
+        var walkInOrders = await _db.Orders.AsNoTracking()
+            .Where(o => o.CustomerId == null && o.Status == OrderStatus.Completed)
+            .Select(o => new { o.Id, o.TotalAmount })
+            .ToListAsync();
+        var walkInIds = walkInOrders.Select(o => o.Id).ToList();
+        var walkInPaid = await _db.Payments.AsNoTracking()
+            .Where(p => walkInIds.Contains(p.OrderId) && p.Status == PaymentStatus.Completed)
+            .GroupBy(p => p.OrderId)
+            .Select(g => new { OrderId = g.Key, Total = g.Sum(p => p.Amount) })
+            .ToDictionaryAsync(x => x.OrderId, x => x.Total);
+        var walkInOutstanding = walkInOrders
+            .Select(o => Math.Max(0m, o.TotalAmount - walkInPaid.GetValueOrDefault(o.Id, 0m)))
+            .Where(x => x > 0m)
+            .ToList();
+
+        return Ok(new
+        {
+            items = pageItems, page, pageSize, totalItems, totalPages,
+            walkInUnresolvedDebt = walkInOutstanding.Sum(),
+            walkInUnresolvedOrderCount = walkInOutstanding.Count
+        });
     }
 
+    /// <summary>
+    /// Historical walk-in orders (no customer) that still have an outstanding balance. Read-only,
+    /// for the owner's separate decision. This endpoint never modifies, voids or deletes anything.
+    /// </summary>
+    [HttpGet("~/api/debts/walk-in-exceptions")]
+    [Authorize(Roles = "Admin,Manager")]
+    public async Task<IActionResult> GetWalkInExceptions()
+    {
+        var rows = await _db.Orders.AsNoTracking()
+            .Where(o => o.CustomerId == null && o.Status == OrderStatus.Completed)
+            .Select(o => new
+            {
+                o.Id,
+                o.OrderNumber,
+                o.OrderDate,
+                Total = o.TotalAmount,
+                Paid = _db.Payments
+                    .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
+                    .Sum(p => (decimal?)p.Amount) ?? 0m
+            })
+            .ToListAsync();
 
+        var items = rows
+            .Where(r => r.Total > r.Paid)
+            .OrderBy(r => r.OrderDate)
+            .Select(r => new
+            {
+                orderId = r.Id,
+                orderNumber = r.OrderNumber,
+                orderDate = r.OrderDate,
+                total = r.Total,
+                paid = r.Paid,
+                outstanding = r.Total - r.Paid
+            })
+            .ToList();
+
+        return Ok(new { items, totalOutstanding = items.Sum(i => i.outstanding), count = items.Count });
+    }
 }

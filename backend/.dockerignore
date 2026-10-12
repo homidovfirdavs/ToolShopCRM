@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/appsettings.*.local.json
+**/*.env
+**/.env*
+ToolShop.Tests/
+scripts/
+Dockerfile
+.dockerignore

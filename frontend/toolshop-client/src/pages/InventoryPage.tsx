@@ -1,407 +1,351 @@
-import { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
-import {
-  getStock,
-  stockIn,
-  stockOut,
-  createAdjustment,
-  type StockItem,
-  type StockStatus,
-} from "../api/inventory";
-import { getCategories, getBrands, type Category, type Brand } from "../api/catalog";
-import { useAuth } from "../context/AuthContext";
+import { useEffect, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { getStock, stockIn, stockOut, createAdjustment, type StockItem, type StockStatus } from "../api/inventory";
+import { getCategories, getBrands } from "../api/catalog";
+import { usePermissions } from "../auth/usePermissions";
+import { useI18n } from "../i18n/useI18n";
+import { useAsyncData } from "../lib/useAsyncData";
+import { errorMessage, errorStatus } from "../lib/apiError";
+import { formatNumber } from "../lib/format";
+import PageHeader from "../components/ui/PageHeader";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import Modal from "../components/ui/Modal";
+import FormField from "../components/ui/FormField";
+import StatusBadge from "../components/ui/StatusBadge";
+import Pagination from "../components/ui/Pagination";
+import SearchInput from "../components/ui/SearchInput";
+import { EmptyState, ErrorState, LoadingSkeleton } from "../components/ui/States";
+import { useToast } from "../components/ui/useToast";
+import { inputClass, tdClass, thClass } from "../components/ui/formStyles";
 
-type ModalMode = "in" | "out" | "adjust" | null;
+type ModalMode = "in" | "out" | "adjust";
 
-function StatusBadge({ status }: { status: StockStatus }) {
-  const styles: Record<StockStatus, string> = {
-    InStock: "text-green-600",
-    LowStock: "text-yellow-600",
-    OutOfStock: "text-red-600",
-  };
-  const labels: Record<StockStatus, string> = {
-    InStock: "In Stock",
-    LowStock: "Low Stock",
-    OutOfStock: "Out of Stock",
-  };
-  return <span className={`font-medium ${styles[status]}`}>{labels[status]}</span>;
+const STATUS_TONE: Record<StockStatus, "green" | "yellow" | "red"> = {
+  InStock: "green",
+  LowStock: "yellow",
+  OutOfStock: "red",
+};
+
+interface Filters {
+  search: string;
+  categoryId: string;
+  brandId: string;
+  status: string;
+  page: number;
 }
 
 export default function InventoryPage() {
-  const { user } = useAuth();
-  const canManage =
-    user?.roles.includes("Admin") ||
-    user?.roles.includes("Manager") ||
-    user?.roles.includes("Warehouse");
+  const { t } = useI18n();
+  const { has } = usePermissions();
+  const toast = useToast();
+  const [params] = useSearchParams();
+  const canManage = has("Inventory.Adjust");
 
-  const [items, setItems] = useState<StockItem[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
+  const [filters, setFilters] = useState<Filters>(() => ({
+    search: "",
+    categoryId: "",
+    brandId: "",
+    status: params.get("status") ?? "",
+    page: 1,
+  }));
+  const [searchText, setSearchText] = useState("");
 
-  const [search, setSearch] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [brandId, setBrandId] = useState("");
-  const [status, setStatus] = useState("");
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setFilters((f) => (f.search === searchText ? f : { ...f, search: searchText, page: 1 }));
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [searchText]);
 
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalItems, setTotalItems] = useState(0);
+  function patch(p: Partial<Filters>) {
+    setFilters((f) => ({ ...f, ...p, page: p.page ?? 1 }));
+  }
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const lookups = useAsyncData(async () => {
+    const [categories, brands] = await Promise.all([getCategories(), getBrands()]);
+    return { categories, brands };
+  }, "lookups");
 
-  const [modalMode, setModalMode] = useState<ModalMode>(null);
-  const [selectedItem, setSelectedItem] = useState<StockItem | null>(null);
+  const list = useAsyncData(
+    () =>
+      getStock({
+        search: filters.search || undefined,
+        categoryId: filters.categoryId ? Number(filters.categoryId) : undefined,
+        brandId: filters.brandId ? Number(filters.brandId) : undefined,
+        status: filters.status ? (filters.status as StockStatus) : undefined,
+        page: filters.page,
+        pageSize: 20,
+      }),
+    JSON.stringify(filters),
+  );
+
+  // ---- stock operation modal ----
+  const [mode, setMode] = useState<ModalMode | null>(null);
+  const [item, setItem] = useState<StockItem | null>(null);
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
-  const [adjustDirection, setAdjustDirection] = useState<"increase" | "decrease">("increase");
+  const [direction, setDirection] = useState<"increase" | "decrease">("increase");
   const [modalError, setModalError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const loadStock = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await getStock({
-        search: search || undefined,
-        categoryId: categoryId ? Number(categoryId) : undefined,
-        brandId: brandId ? Number(brandId) : undefined,
-        status: status ? (status as StockStatus) : undefined,
-        page,
-        pageSize: 20,
-      });
-      setItems(result.items);
-      setTotalPages(result.totalPages);
-      setTotalItems(result.totalItems);
-    } catch {
-      setError("Unable to load inventory.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [search, categoryId, brandId, status, page]);
-
-  useEffect(() => {
-    getCategories().then(setCategories).catch(() => {});
-    getBrands().then(setBrands).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    loadStock();
-  }, [loadStock]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [search, categoryId, brandId, status]);
-
-  function openModal(mode: ModalMode, item: StockItem) {
-    setModalMode(mode);
-    setSelectedItem(item);
+  function openModal(m: ModalMode, it: StockItem) {
+    setMode(m);
+    setItem(it);
     setQuantity("");
     setReason("");
     setNotes("");
-    setAdjustDirection("increase");
+    setDirection("increase");
     setModalError(null);
   }
 
   function closeModal() {
-    setModalMode(null);
-    setSelectedItem(null);
+    if (saving) return;
+    setMode(null);
+    setItem(null);
   }
 
-  async function handleConfirm() {
-    if (!selectedItem) return;
+  async function handleConfirm(e: FormEvent) {
+    e.preventDefault();
+    if (!item || !mode || saving) return;
     setModalError(null);
 
     const qty = Number(quantity);
-    if (!qty || qty <= 0) {
-      setModalError("Quantity must be greater than zero.");
-      return;
-    }
-    if (!reason.trim()) {
-      setModalError("Reason is required.");
-      return;
-    }
-    if (modalMode === "out" && qty > selectedItem.currentStock) {
-      setModalError(
-        `Warning: quantity exceeds available stock (${selectedItem.currentStock}).`
-      );
-      return;
+    if (!qty || qty <= 0) return setModalError(t("inv.qtyPositive"));
+    if (!reason.trim()) return setModalError(t("inv.reasonRequired"));
+    const reducing = mode === "out" || (mode === "adjust" && direction === "decrease");
+    if (reducing && qty > item.currentStock) {
+      return setModalError(`${t("inv.exceeds")} (${formatNumber(item.currentStock)}).`);
     }
 
-    setIsSaving(true);
+    setSaving(true);
     try {
-      if (modalMode === "in") {
-        await stockIn(selectedItem.productId, qty, reason.trim(), notes.trim());
-      } else if (modalMode === "out") {
-        await stockOut(selectedItem.productId, qty, reason.trim(), notes.trim());
-      } else if (modalMode === "adjust") {
+      if (mode === "in") await stockIn(item.productId, qty, reason.trim(), notes.trim());
+      else if (mode === "out") await stockOut(item.productId, qty, reason.trim(), notes.trim());
+      else
         await createAdjustment(
-          selectedItem.productId,
-          adjustDirection === "increase" ? "AdjustmentIncrease" : "AdjustmentDecrease",
+          item.productId,
+          direction === "increase" ? "AdjustmentIncrease" : "AdjustmentDecrease",
           qty,
           reason.trim(),
-          notes.trim()
+          notes.trim(),
         );
-      }
-      closeModal();
-      loadStock();
+      toast.success(t("common.saved"));
+      setMode(null);
+      setItem(null);
+      list.reload();
     } catch (err) {
-      const response =
-        typeof err === "object" && err !== null && "response" in err
-          ? (err as { response?: { status?: number; data?: { message?: string } } })
-              .response
-          : undefined;
-
-      if (response?.status === 409) {
-        setModalError(response.data?.message ?? "Insufficient stock.");
-      } else {
-        setModalError("Something went wrong. Please try again.");
-      }
+      if (errorStatus(err) === 409) setModalError(errorMessage(err) ?? t("inv.insufficient"));
+      else setModalError(t("common.somethingWrong"));
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-800">Inventory</h1>
-          <Link
-            to="/inventory/movements"
-            className="text-blue-600 hover:underline text-sm"
-          >
-            View Movement History
-          </Link>
-        </div>
+  const data = list.data;
+  const categories = lookups.data?.categories ?? [];
+  const brands = lookups.data?.brands ?? [];
+  const modalTitle = mode === "in" ? t("inv.stockIn") : mode === "out" ? t("inv.stockOut") : t("inv.adjustTitle");
+  const hint = mode === "out" ? t("inv.hintOut") : mode === "adjust" ? t("inv.hintAdjust") : null;
 
-        <div className="bg-white rounded-lg shadow p-4 mb-4 flex flex-wrap gap-3">
-          <input
-            type="text"
-            placeholder="Search products..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 flex-1 min-w-[200px]"
-          />
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2"
-          >
-            <option value="">All Categories</option>
+  return (
+    <div className="w-full">
+      <PageHeader
+        title={t("inv.title")}
+        actions={
+          <Link to="/inventory/movements">
+            <Button variant="secondary">{t("inv.history")}</Button>
+          </Link>
+        }
+      />
+
+      <Card className="mb-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SearchInput value={searchText} onChange={setSearchText} placeholder={t("prod.search")} />
+          <select className={inputClass} value={filters.categoryId} onChange={(e) => patch({ categoryId: e.target.value })}>
+            <option value="">{t("prod.allCategories")}</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
           </select>
-          <select
-            value={brandId}
-            onChange={(e) => setBrandId(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2"
-          >
-            <option value="">All Brands</option>
+          <select className={inputClass} value={filters.brandId} onChange={(e) => patch({ brandId: e.target.value })}>
+            <option value="">{t("prod.allBrands")}</option>
             {brands.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>
             ))}
           </select>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2"
-          >
-            <option value="">All Statuses</option>
-            <option value="InStock">In Stock</option>
-            <option value="LowStock">Low Stock</option>
-            <option value="OutOfStock">Out of Stock</option>
+          <select className={inputClass} value={filters.status} onChange={(e) => patch({ status: e.target.value })}>
+            <option value="">{t("inv.allStatuses")}</option>
+            <option value="InStock">{t("inv.status.InStock")}</option>
+            <option value="LowStock">{t("inv.status.LowStock")}</option>
+            <option value="OutOfStock">{t("inv.status.OutOfStock")}</option>
           </select>
         </div>
+      </Card>
 
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          {isLoading ? (
-            <p className="p-6 text-center text-gray-500">Loading inventory...</p>
-          ) : error ? (
-            <p className="p-6 text-center text-red-600">{error}</p>
-          ) : items.length === 0 ? (
-            <p className="p-6 text-center text-gray-500">No products found.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left text-gray-600">
+      <Card className="overflow-hidden !p-0">
+        {list.loading && <LoadingSkeleton />}
+        {list.error && <ErrorState message={t("common.loadFailed")} onRetry={list.reload} />}
+        {!list.loading && !list.error && data && data.items.length === 0 && <EmptyState message={t("inv.empty")} />}
+        {!list.loading && !list.error && data && data.items.length > 0 && (
+          <>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full">
+              <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3">SKU</th>
-                  <th className="px-4 py-3">Category</th>
-                  <th className="px-4 py-3">Brand</th>
-                  <th className="px-4 py-3">Current Stock</th>
-                  <th className="px-4 py-3">Minimum</th>
-                  <th className="px-4 py-3">Status</th>
-                  {canManage && <th className="px-4 py-3">Actions</th>}
+                  <th className={thClass}>{t("inv.product")}</th>
+                  <th className={thClass}>SKU</th>
+                  <th className={thClass}>{t("prod.category")}</th>
+                  <th className={thClass}>{t("prod.brand")}</th>
+                  <th className={`${thClass} text-right`}>{t("inv.current")}</th>
+                  <th className={`${thClass} text-right`}>{t("inv.minimum")}</th>
+                  <th className={thClass}>{t("common.status")}</th>
+                  {canManage && <th className={thClass}>{t("common.actions")}</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {items.map((item) => (
-                  <tr key={item.productId} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">{item.productName}</td>
-                    <td className="px-4 py-3">{item.sku}</td>
-                    <td className="px-4 py-3">{item.categoryName}</td>
-                    <td className="px-4 py-3">{item.brandName}</td>
-                    <td className="px-4 py-3">{item.currentStock}</td>
-                    <td className="px-4 py-3">{item.minimumStockLevel}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={item.status} />
+              <tbody className="divide-y divide-slate-100">
+                {data.items.map((it) => (
+                  <tr key={it.productId} className="hover:bg-slate-50">
+                    <td className={`${tdClass} font-medium text-slate-900`}>{it.productName}</td>
+                    <td className={tdClass}>{it.sku}</td>
+                    <td className={tdClass}>{it.categoryName}</td>
+                    <td className={tdClass}>{it.brandName}</td>
+                    <td className={`${tdClass} text-right font-semibold`}>{formatNumber(it.currentStock)}</td>
+                    <td className={`${tdClass} text-right`}>{formatNumber(it.minimumStockLevel)}</td>
+                    <td className={tdClass}>
+                      <StatusBadge label={t(`inv.status.${it.status}`)} tone={STATUS_TONE[it.status]} />
                     </td>
                     {canManage && (
-                      <td className="px-4 py-3 space-x-3">
-                        <button
-                          onClick={() => openModal("in", item)}
-                          className="text-blue-600 hover:underline"
-                        >
-                          Stock In
-                        </button>
-                        <button
-                          onClick={() => openModal("out", item)}
-                          className="text-red-600 hover:underline"
-                        >
-                          Stock Out
-                        </button>
-                        <button
-                          onClick={() => openModal("adjust", item)}
-                          className="text-gray-600 hover:underline"
-                        >
-                          Adjust
-                        </button>
+                      <td className={tdClass}>
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="secondary" onClick={() => openModal("in", it)}>
+                            {t("inv.stockIn")}
+                          </Button>
+                          <Button size="sm" variant="secondary" onClick={() => openModal("out", it)}>
+                            {t("inv.stockOut")}
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => openModal("adjust", it)}>
+                            {t("inv.adjust")}
+                          </Button>
+                        </div>
                       </td>
                     )}
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
-
-        {totalPages > 1 && (
-          <div className="flex justify-between items-center mt-4 text-sm text-gray-600">
-            <span>
-              Page {page} of {totalPages} ({totalItems} items)
-            </span>
-            <div className="space-x-2">
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-                className="px-3 py-1 border rounded-md disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <button
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
-                className="px-3 py-1 border rounded-md disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
           </div>
+          <ul className="divide-y divide-slate-100 md:hidden" data-testid="inventory-cards">
+            {data.items.map((it) => (
+              <li key={it.productId} className="space-y-2 px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-900">{it.productName}</p>
+                    <p className="text-xs text-slate-500">
+                      {it.sku} · {it.categoryName} · {it.brandName}
+                    </p>
+                  </div>
+                  <StatusBadge label={t(`inv.status.${it.status}`)} tone={STATUS_TONE[it.status]} />
+                </div>
+                <p className="text-sm text-slate-600">
+                  {t("inv.current")}: <span className="font-semibold text-slate-900">{formatNumber(it.currentStock)}</span>
+                  {" · "}
+                  {t("inv.minimum")}: {formatNumber(it.minimumStockLevel)}
+                </p>
+                {canManage && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" className="min-h-10" onClick={() => openModal("in", it)}>
+                      {t("inv.stockIn")}
+                    </Button>
+                    <Button size="sm" variant="secondary" className="min-h-10" onClick={() => openModal("out", it)}>
+                      {t("inv.stockOut")}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="min-h-10" onClick={() => openModal("adjust", it)}>
+                      {t("inv.adjust")}
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          </>
         )}
-      </div>
+      </Card>
 
-      {modalMode && selectedItem && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
-            <h2 className="text-lg font-bold text-gray-800 mb-1">
-              {modalMode === "in" && "Stock In"}
-              {modalMode === "out" && "Stock Out"}
-              {modalMode === "adjust" && "Adjust Stock"}
-            </h2>
-            <p className="text-sm text-gray-500 mb-4">
-              {selectedItem.productName} — Current stock: {selectedItem.currentStock}
+      {data && (
+        <Pagination
+          page={filters.page}
+          totalPages={data.totalPages}
+          totalItems={data.totalItems}
+          onChange={(page) => patch({ page })}
+        />
+      )}
+
+      <Modal
+        open={mode !== null && item !== null}
+        title={modalTitle}
+        onClose={closeModal}
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeModal} disabled={saving}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" form="stock-form" loading={saving}>
+              {t("common.confirm")}
+            </Button>
+          </>
+        }
+      >
+        {item && (
+          <form id="stock-form" onSubmit={handleConfirm} className="space-y-4">
+            <p className="text-sm text-slate-600">
+              <span className="font-medium text-slate-900">{item.productName}</span> — {t("inv.current")}:{" "}
+              <span className="font-semibold">{formatNumber(item.currentStock)}</span>
             </p>
+            {hint && <p className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600">{hint}</p>}
 
+            {mode === "adjust" && (
+              <div className="flex gap-4 text-sm">
+                <label className="flex items-center gap-1">
+                  <input type="radio" checked={direction === "increase"} onChange={() => setDirection("increase")} />
+                  {t("inv.increase")}
+                </label>
+                <label className="flex items-center gap-1">
+                  <input type="radio" checked={direction === "decrease"} onChange={() => setDirection("decrease")} />
+                  {t("inv.decrease")}
+                </label>
+              </div>
+            )}
+
+            <FormField label={t("inv.quantity")} required>
+              <input
+                type="number"
+                min="0"
+                className={inputClass}
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                autoFocus
+              />
+            </FormField>
+            <FormField label={t("inv.reason")} required>
+              <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} />
+            </FormField>
+            <FormField label={t("inv.notes")}>
+              <textarea className={inputClass} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </FormField>
             {modalError && (
-              <p className="text-red-600 text-sm mb-3" role="alert">
+              <p className="text-sm text-red-600" role="alert">
                 {modalError}
               </p>
             )}
-
-            <div className="space-y-3">
-              {modalMode === "adjust" && (
-                <div className="flex gap-4 text-sm">
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={adjustDirection === "increase"}
-                      onChange={() => setAdjustDirection("increase")}
-                    />
-                    Increase
-                  </label>
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={adjustDirection === "decrease"}
-                      onChange={() => setAdjustDirection("decrease")}
-                    />
-                    Decrease
-                  </label>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity *
-                </label>
-                <input
-                  type="number"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Reason *
-                </label>
-                <input
-                  type="text"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Notes
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2"
-                  rows={2}
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-5">
-              <button
-                onClick={handleConfirm}
-                disabled={isSaving}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 transition"
-              >
-                {isSaving ? "Saving..." : "Confirm"}
-              </button>
-              <button
-                onClick={closeModal}
-                className="border border-gray-300 px-4 py-2 rounded-md hover:bg-gray-50 transition"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }

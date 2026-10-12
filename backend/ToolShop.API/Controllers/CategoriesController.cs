@@ -41,7 +41,24 @@ public class CategoriesController : ControllerBase
             .Select(c => ToResponse(c))
             .ToListAsync();
 
-        return Ok(categories);
+        // Real product counts: active products (what Inventory/POS show) and all products incl. inactive.
+        var counts = await _db.Products
+            .AsNoTracking()
+            .GroupBy(p => p.CategoryId)
+            .Select(g => new { CategoryId = g.Key, Active = g.Count(p => p.IsActive), Total = g.Count() })
+            .ToDictionaryAsync(x => x.CategoryId);
+
+        return Ok(categories.Select(c => new
+        {
+            c.Id,
+            c.Name,
+            c.Description,
+            c.IsActive,
+            c.CreatedAt,
+            c.UpdatedAt,
+            productCount = counts.TryGetValue(c.Id, out var n) ? n.Active : 0,
+            totalProductCount = counts.TryGetValue(c.Id, out var n2) ? n2.Total : 0
+        }));
     }
 
     [HttpGet("{id:int}")]

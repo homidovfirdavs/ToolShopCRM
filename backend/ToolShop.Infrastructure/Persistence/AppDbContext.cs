@@ -7,6 +7,7 @@ using ToolShop.Domain.Entities.Inventory;
 using ToolShop.Domain.Entities.Purchases;
 using ToolShop.Domain.Entities.Sales;
 using ToolShop.Domain.Entities.Payments;
+using ToolShop.Domain.Entities.Finance;
 namespace ToolShop.Infrastructure.Persistence;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
@@ -21,17 +22,19 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Brand> Brands => Set<Brand>();
-       public DbSet<Product> Products => Set<Product>();
+    public DbSet<Product> Products => Set<Product>();
     public DbSet<Customer> Customers => Set<Customer>();
 
-        public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
+    public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     public DbSet<Purchase> Purchases => Set<Purchase>();
-        public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
+    public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Payment> Payments => Set<Payment>();
 
+    public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
+    public DbSet<Expense> Expenses => Set<Expense>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -77,7 +80,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .HasForeignKey(p => p.BrandId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
-        
+
         builder.Entity<Customer>(entity =>
         {
             entity.Property(c => c.Name).HasMaxLength(200).IsRequired();
@@ -89,7 +92,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(c => c.NormalizedPhone).IsUnique();
             entity.HasIndex(c => c.Name);
         });
-        
+
         builder.Entity<InventoryMovement>(entity =>
         {
             entity.Property(m => m.Reason).HasMaxLength(500).IsRequired();
@@ -107,7 +110,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-                builder.Entity<Supplier>(entity =>
+        builder.Entity<Supplier>(entity =>
         {
             entity.Property(s => s.Name).HasMaxLength(200).IsRequired();
             entity.Property(s => s.ContactPerson).HasMaxLength(150);
@@ -159,7 +162,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-                builder.Entity<Order>(entity =>
+        builder.Entity<Order>(entity =>
         {
             entity.Property(o => o.OrderNumber).HasMaxLength(20).IsRequired();
             entity.Property(o => o.Notes).HasMaxLength(1000);
@@ -186,6 +189,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(i => i.UnitPrice).HasPrecision(18, 2);
             entity.Property(i => i.DiscountAmount).HasPrecision(18, 2);
             entity.Property(i => i.LineTotal).HasPrecision(18, 2);
+            entity.Property(i => i.CostAtSale).HasPrecision(18, 2);
 
             entity.HasIndex(i => i.OrderId);
             entity.HasIndex(i => i.ProductId);
@@ -201,7 +205,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-                builder.Entity<Payment>(entity =>
+        builder.Entity<Payment>(entity =>
         {
             entity.Property(p => p.PaymentNumber).HasMaxLength(20).IsRequired();
             entity.Property(p => p.Amount).HasPrecision(18, 2);
@@ -225,6 +229,37 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(p => p.Customer)
                 .WithMany()
                 .HasForeignKey(p => p.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // TASK 09 — Finance
+        builder.Entity<ExpenseCategory>(entity =>
+        {
+            entity.Property(c => c.Name).HasMaxLength(150).IsRequired();
+            entity.Property(c => c.Description).HasMaxLength(500);
+
+            entity.HasIndex(c => c.Name).IsUnique();
+        });
+
+        builder.Entity<Expense>(entity =>
+        {
+            entity.Property(e => e.ExpenseNumber).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.Amount).HasPrecision(18, 2);
+            entity.Property(e => e.Description).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.ReferenceNumber).HasMaxLength(100);
+            entity.Property(e => e.Notes).HasMaxLength(1000);
+            entity.Property(e => e.CreatedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(e => e.VoidedByUserId).HasMaxLength(450);
+            entity.Property(e => e.VoidReason).HasMaxLength(500);
+
+            entity.HasIndex(e => e.ExpenseNumber).IsUnique();
+            entity.HasIndex(e => e.ExpenseDate);
+            entity.HasIndex(e => e.ExpenseCategoryId);
+            entity.HasIndex(e => e.IsVoided);
+
+            entity.HasOne(e => e.ExpenseCategory)
+                .WithMany()
+                .HasForeignKey(e => e.ExpenseCategoryId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 

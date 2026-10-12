@@ -1,209 +1,178 @@
-import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import {
-  getPurchase,
-  confirmPurchase,
-  cancelPurchase,
-  type Purchase,
-} from "../api/purchases";
-import { useAuth } from "../context/AuthContext";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { getPurchase, confirmPurchase, cancelPurchase, type PurchaseStatus } from "../api/purchases";
+import { usePermissions } from "../auth/usePermissions";
+import { useI18n } from "../i18n/useI18n";
+import { useAsyncData } from "../lib/useAsyncData";
+import { errorMessage } from "../lib/apiError";
+import { formatDate, formatDateTime, formatMoney, formatNumber } from "../lib/format";
+import PageHeader from "../components/ui/PageHeader";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import StatusBadge from "../components/ui/StatusBadge";
+import { ErrorState, LoadingSkeleton } from "../components/ui/States";
+import { useToast } from "../components/ui/useToast";
+import { tdClass, thClass } from "../components/ui/formStyles";
+
+const TONE: Record<PurchaseStatus, "gray" | "green" | "red"> = {
+  Draft: "gray",
+  Confirmed: "green",
+  Cancelled: "red",
+};
 
 export default function PurchaseDetailsPage() {
   const { id } = useParams();
-  const navigate = useNavigate();
-  const { user } = useAuth();
-  const canConfirm = user?.roles.includes("Admin") || user?.roles.includes("Manager");
-  const canCancel =
-    user?.roles.includes("Admin") ||
-    user?.roles.includes("Manager") ||
-    user?.roles.includes("Warehouse");
+  const { t } = useI18n();
+  const toast = useToast();
+  const { hasRole } = usePermissions();
+  const canConfirm = hasRole("Admin", "Manager");
+  const canCancel = hasRole("Admin", "Manager", "Warehouse");
 
-  const [purchase, setPurchase] = useState<Purchase | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const { data: purchase, loading, error, reload } = useAsyncData(() => getPurchase(Number(id)), id ?? "");
 
-  function load() {
-    if (!id) return;
-    setIsLoading(true);
-    getPurchase(Number(id))
-      .then(setPurchase)
-      .catch(() => setError("Purchase not found."))
-      .finally(() => setIsLoading(false));
-  }
+  const [dialog, setDialog] = useState<"confirm" | "cancel" | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(load, [id]);
-
-  async function handleConfirm() {
-    if (!purchase) return;
-    if (!confirm("Confirm this purchase? Stock will be added automatically.")) return;
-
-    setIsProcessing(true);
-    setError(null);
+  async function run() {
+    if (!purchase || !dialog || busy) return;
+    setBusy(true);
     try {
-      await confirmPurchase(purchase.id);
-      load();
+      if (dialog === "confirm") {
+        await confirmPurchase(purchase.id);
+        toast.success(t("pur.confirmed"));
+      } else {
+        await cancelPurchase(purchase.id);
+        toast.success(t("pur.cancelled"));
+      }
+      setDialog(null);
+      reload();
     } catch (err) {
-      const response =
-        typeof err === "object" && err !== null && "response" in err
-          ? (err as { response?: { data?: { message?: string } } }).response
-          : undefined;
-      setError(response?.data?.message ?? "Failed to confirm purchase.");
+      toast.error(errorMessage(err) ?? t(dialog === "confirm" ? "pur.confirmFailed" : "pur.cancelFailed"));
+      setDialog(null);
     } finally {
-      setIsProcessing(false);
+      setBusy(false);
     }
   }
 
-  async function handleCancel() {
-    if (!purchase) return;
-    if (!confirm("Cancel this draft purchase?")) return;
+  if (loading) return <LoadingSkeleton rows={8} />;
+  if (error || !purchase) return <ErrorState message={t("pur.notFound")} onRetry={reload} />;
 
-    setIsProcessing(true);
-    setError(null);
-    try {
-      await cancelPurchase(purchase.id);
-      load();
-    } catch {
-      setError("Failed to cancel purchase.");
-    } finally {
-      setIsProcessing(false);
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-500">Loading...</p>
-      </div>
-    );
-  }
-
-  if (!purchase) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-red-600">{error ?? "Purchase not found."}</p>
-      </div>
-    );
-  }
-
-  const statusColor =
-    purchase.status === "Confirmed"
-      ? "text-green-600"
-      : purchase.status === "Cancelled"
-        ? "text-red-600"
-        : "text-gray-600";
+  const isDraft = purchase.status === "Draft";
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="max-w-3xl mx-auto bg-white rounded-lg shadow p-6">
-        <div className="flex justify-between items-start mb-6">
-          <div>
-            <h1 className="text-xl font-bold text-gray-800">
-              {purchase.purchaseNumber}
-            </h1>
-            <p className="text-sm text-gray-500">{purchase.supplierName}</p>
-          </div>
-          <span className={`font-medium ${statusColor}`}>{purchase.status}</span>
-        </div>
+    <div className="mx-auto max-w-4xl">
+      <PageHeader
+        title={purchase.purchaseNumber}
+        subtitle={purchase.supplierName}
+        actions={
+          <>
+            <StatusBadge label={t(`pur.status.${purchase.status}`)} tone={TONE[purchase.status]} />
+            <Link to="/purchases">
+              <Button variant="secondary">{t("common.back")}</Button>
+            </Link>
+          </>
+        }
+      />
 
-        {error && (
-          <p className="text-red-600 text-sm mb-4" role="alert">
-            {error}
-          </p>
-        )}
-
-        <div className="grid grid-cols-2 gap-4 text-sm mb-6">
+      <Card className="mb-4">
+        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <div>
-            <dt className="text-gray-500">Purchase Date</dt>
-            <dd>{new Date(purchase.purchaseDate).toLocaleDateString()}</dd>
+            <dt className="text-slate-500">{t("pur.date")}</dt>
+            <dd className="font-medium text-slate-900">{formatDate(purchase.purchaseDate)}</dd>
           </div>
           <div>
-            <dt className="text-gray-500">Created By</dt>
-            <dd>{purchase.createdByUsername}</dd>
+            <dt className="text-slate-500">{t("pur.createdBy")}</dt>
+            <dd className="font-medium text-slate-900">{purchase.createdByUsername}</dd>
           </div>
           {purchase.confirmedByUsername && (
             <>
               <div>
-                <dt className="text-gray-500">Confirmed By</dt>
-                <dd>{purchase.confirmedByUsername}</dd>
+                <dt className="text-slate-500">{t("pur.confirmedBy")}</dt>
+                <dd className="font-medium text-slate-900">{purchase.confirmedByUsername}</dd>
               </div>
               <div>
-                <dt className="text-gray-500">Confirmed At</dt>
-                <dd>
-                  {purchase.confirmedAt
-                    ? new Date(purchase.confirmedAt).toLocaleString()
-                    : "—"}
+                <dt className="text-slate-500">{t("pur.confirmedAt")}</dt>
+                <dd className="font-medium text-slate-900">
+                  {purchase.confirmedAt ? formatDateTime(purchase.confirmedAt) : "—"}
                 </dd>
               </div>
             </>
           )}
-        </div>
+          {purchase.notes && (
+            <div className="col-span-2 sm:col-span-4">
+              <dt className="text-slate-500">{t("pur.notes")}</dt>
+              <dd className="text-slate-900">{purchase.notes}</dd>
+            </div>
+          )}
+        </dl>
+      </Card>
 
-        <table className="w-full text-sm mb-4">
-          <thead className="text-left text-gray-500 border-b border-gray-100">
-            <tr>
-              <th className="py-2">Product</th>
-              <th className="py-2">SKU</th>
-              <th className="py-2">Qty</th>
-              <th className="py-2">Unit Cost</th>
-              <th className="py-2">Line Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {purchase.items.map((i) => (
-              <tr key={i.id}>
-                <td className="py-2">{i.productName}</td>
-                <td className="py-2">{i.sku}</td>
-                <td className="py-2">{i.quantity}</td>
-                <td className="py-2">{i.unitCost.toFixed(2)}</td>
-                <td className="py-2">{i.lineTotal.toFixed(2)}</td>
+      <Card className="mb-4 overflow-hidden !p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className={thClass}>{t("inv.product")}</th>
+                <th className={thClass}>SKU</th>
+                <th className={`${thClass} text-right`}>{t("pur.qty")}</th>
+                <th className={`${thClass} text-right`}>{t("pur.unitCost")}</th>
+                <th className={`${thClass} text-right`}>{t("pur.lineTotal")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {purchase.items.map((i) => (
+                <tr key={i.id}>
+                  <td className={`${tdClass} font-medium text-slate-900`}>{i.productName}</td>
+                  <td className={tdClass}>{i.sku}</td>
+                  <td className={`${tdClass} text-right`}>{formatNumber(i.quantity)}</td>
+                  <td className={`${tdClass} text-right`}>{formatMoney(i.unitCost)}</td>
+                  <td className={`${tdClass} text-right`}>{formatMoney(i.lineTotal)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
-        <div className="border-t border-gray-100 pt-3 space-y-1 text-sm max-w-xs ml-auto">
+      <Card>
+        <div className="ml-auto max-w-xs space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-gray-600">Subtotal</span>
-            <span>{purchase.subtotal.toFixed(2)}</span>
+            <span className="text-slate-600">{t("pur.subtotal")}</span>
+            <span>{formatMoney(purchase.subtotal)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-600">Discount</span>
-            <span>{purchase.discountAmount.toFixed(2)}</span>
+            <span className="text-slate-600">{t("pur.discount")}</span>
+            <span>{formatMoney(purchase.discountAmount)}</span>
           </div>
-          <div className="flex justify-between font-bold text-gray-800">
-            <span>Total</span>
-            <span>{purchase.totalAmount.toFixed(2)}</span>
+          <div className="flex justify-between border-t border-slate-100 pt-2 text-base font-bold text-slate-900">
+            <span>{t("pur.total")}</span>
+            <span>{formatMoney(purchase.totalAmount)}</span>
           </div>
         </div>
 
-        <div className="flex gap-3 mt-6 pt-6 border-t border-gray-100">
-          {purchase.status === "Draft" && canConfirm && (
-            <button
-              onClick={handleConfirm}
-              disabled={isProcessing}
-              className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 transition"
-            >
-              Confirm Purchase
-            </button>
-          )}
-          {purchase.status === "Draft" && canCancel && (
-            <button
-              onClick={handleCancel}
-              disabled={isProcessing}
-              className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:opacity-50 transition"
-            >
-              Cancel Purchase
-            </button>
-          )}
-          <button
-            onClick={() => navigate("/purchases")}
-            className="border border-gray-300 px-4 py-2 rounded-md hover:bg-gray-50 transition"
-          >
-            Back to List
-          </button>
-        </div>
-      </div>
+        {isDraft && (canConfirm || canCancel) && (
+          <div className="mt-5 flex flex-wrap gap-3 border-t border-slate-100 pt-4">
+            {canConfirm && <Button onClick={() => setDialog("confirm")}>{t("pur.confirm")}</Button>}
+            {canCancel && (
+              <Button variant="danger" onClick={() => setDialog("cancel")}>
+                {t("pur.cancel")}
+              </Button>
+            )}
+          </div>
+        )}
+      </Card>
+
+      <ConfirmDialog
+        open={dialog !== null}
+        title={dialog === "confirm" ? t("pur.confirm") : t("pur.cancel")}
+        message={dialog === "confirm" ? t("pur.confirmMsg") : t("pur.cancelMsg")}
+        confirmLabel={dialog === "confirm" ? t("common.confirm") : t("pur.cancel")}
+        danger={dialog === "cancel"}
+        loading={busy}
+        onConfirm={run}
+        onCancel={() => setDialog(null)}
+      />
     </div>
   );
 }

@@ -1,8 +1,17 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { createPurchase, type PurchaseItemInput } from "../api/purchases";
-import { getSuppliers, type SupplierListItem } from "../api/suppliers";
+import { getSuppliers } from "../api/suppliers";
 import { getProducts, type ProductListItem } from "../api/catalog";
+import { useI18n } from "../i18n/useI18n";
+import { useAsyncData } from "../lib/useAsyncData";
+import { formatMoney, formatNumber } from "../lib/format";
+import PageHeader from "../components/ui/PageHeader";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import FormField from "../components/ui/FormField";
+import { useToast } from "../components/ui/useToast";
+import { inputClass, tdClass, thClass } from "../components/ui/formStyles";
 
 interface DraftItem extends PurchaseItemInput {
   productName: string;
@@ -10,16 +19,16 @@ interface DraftItem extends PurchaseItemInput {
 }
 
 export default function PurchaseFormPage() {
+  const { t } = useI18n();
+  const toast = useToast();
   const navigate = useNavigate();
 
-  const [suppliers, setSuppliers] = useState<SupplierListItem[]>([]);
+  const suppliers = useAsyncData(() => getSuppliers({ isActive: true, pageSize: 100 }), "active-suppliers");
+
   const [supplierId, setSupplierId] = useState("");
-  const [purchaseDate, setPurchaseDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  );
+  const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
   const [discountAmount, setDiscountAmount] = useState("0");
-
   const [items, setItems] = useState<DraftItem[]>([]);
 
   const [productSearch, setProductSearch] = useState("");
@@ -29,24 +38,25 @@ export default function PurchaseFormPage() {
   const [selectedProduct, setSelectedProduct] = useState<ProductListItem | null>(null);
 
   const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    getSuppliers({ isActive: true }).then((r) => setSuppliers(r.items)).catch(() => {});
-  }, []);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
-  useEffect(() => {
-    if (!productSearch.trim()) {
+  function onProductSearch(value: string) {
+    setProductSearch(value);
+    setSelectedProduct(null);
+    window.clearTimeout(timer.current);
+    if (!value.trim()) {
       setProductResults([]);
       return;
     }
-    const timeout = setTimeout(() => {
-      getProducts({ search: productSearch, isActive: true, pageSize: 10 })
+    timer.current = window.setTimeout(() => {
+      getProducts({ search: value, isActive: true, pageSize: 10 })
         .then((r) => setProductResults(r.items))
-        .catch(() => {});
+        .catch(() => setProductResults([]));
     }, 300);
-    return () => clearTimeout(timeout);
-  }, [productSearch]);
+  }
 
   function selectProduct(p: ProductListItem) {
     setSelectedProduct(p);
@@ -56,43 +66,22 @@ export default function PurchaseFormPage() {
   }
 
   function addItem() {
-    if (!selectedProduct) {
-      setError("Please select a product first.");
-      return;
-    }
+    if (!selectedProduct) return setError(t("pur.errProduct"));
     const qty = Number(quantity);
     const cost = Number(unitCost);
-    if (!qty || qty <= 0) {
-      setError("Quantity must be greater than zero.");
-      return;
-    }
-    if (cost < 0) {
-      setError("Unit cost must be 0 or more.");
-      return;
-    }
-
+    if (!qty || qty <= 0) return setError(t("pur.errQty"));
+    if (isNaN(cost) || cost < 0) return setError(t("pur.errCost"));
     setError(null);
 
+    const p = selectedProduct;
     setItems((prev) => {
-      const existingIndex = prev.findIndex((i) => i.productId === selectedProduct.id);
-      if (existingIndex >= 0) {
+      const idx = prev.findIndex((i) => i.productId === p.id);
+      if (idx >= 0) {
         const updated = [...prev];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          quantity: updated[existingIndex].quantity + qty,
-        };
+        updated[idx] = { ...updated[idx], quantity: updated[idx].quantity + qty, unitCost: cost };
         return updated;
       }
-      return [
-        ...prev,
-        {
-          productId: selectedProduct.id,
-          productName: selectedProduct.name,
-          sku: selectedProduct.sku,
-          quantity: qty,
-          unitCost: cost,
-        },
-      ];
+      return [...prev, { productId: p.id, productName: p.name, sku: p.sku, quantity: qty, unitCost: cost }];
     });
 
     setSelectedProduct(null);
@@ -109,226 +98,187 @@ export default function PurchaseFormPage() {
   const discount = Number(discountAmount) || 0;
   const total = Math.max(0, subtotal - discount);
 
-  async function handleSaveDraft(e: FormEvent) {
+  async function handleSave(e: FormEvent) {
     e.preventDefault();
+    if (saving) return;
     setError(null);
 
-    if (!supplierId) {
-      setError("Please select a supplier.");
-      return;
-    }
-    if (items.length === 0) {
-      setError("Please add at least one product.");
-      return;
-    }
-    if (discount > subtotal) {
-      setError("Discount cannot exceed subtotal.");
-      return;
-    }
+    if (!supplierId) return setError(t("pur.errSupplier"));
+    if (items.length === 0) return setError(t("pur.errItems"));
+    if (discount < 0 || discount > subtotal) return setError(t("pur.errDiscount"));
 
-    setIsSaving(true);
+    setSaving(true);
     try {
       await createPurchase({
         supplierId: Number(supplierId),
         purchaseDate: new Date(purchaseDate).toISOString(),
         notes: notes.trim(),
         discountAmount: discount,
-        items: items.map((i) => ({
-          productId: i.productId,
-          quantity: i.quantity,
-          unitCost: i.unitCost,
-        })),
+        items: items.map((i) => ({ productId: i.productId, quantity: i.quantity, unitCost: i.unitCost })),
       });
+      toast.success(t("pur.draftSaved"));
       navigate("/purchases");
     } catch {
-      setError("Failed to save purchase draft.");
+      setError(t("pur.saveFailed"));
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="max-w-3xl mx-auto bg-white rounded-lg shadow p-6">
-        <h1 className="text-xl font-bold text-gray-800 mb-6">New Purchase</h1>
+    <div className="mx-auto max-w-4xl">
+      <PageHeader
+        title={t("pur.new.title")}
+        actions={
+          <Link to="/purchases">
+            <Button variant="secondary">{t("common.back")}</Button>
+          </Link>
+        }
+      />
 
-        {error && (
-          <p className="text-red-600 text-sm mb-4" role="alert">
-            {error}
-          </p>
-        )}
-
-        <form onSubmit={handleSaveDraft} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Supplier *
-              </label>
-              <select
-                value={supplierId}
-                onChange={(e) => setSupplierId(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              >
-                <option value="">Select supplier</option>
-                {suppliers.map((s) => (
+      <form onSubmit={handleSave} className="space-y-4">
+        <Card>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label={t("pur.supplier")} required>
+              <select className={inputClass} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+                <option value="">{t("pur.selectSupplier")}</option>
+                {(suppliers.data?.items ?? []).map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
                   </option>
                 ))}
               </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Purchase Date *
-              </label>
+            </FormField>
+            <FormField label={t("pur.date")} required>
+              <input type="date" className={inputClass} value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+            </FormField>
+            <FormField label={t("pur.notes")} className="sm:col-span-2">
+              <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </FormField>
+          </div>
+        </Card>
+
+        <Card>
+          <h2 className="mb-3 text-sm font-semibold text-slate-800">{t("pur.addProduct")}</h2>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-[1fr_6rem_8rem_auto]">
+            <div className="relative col-span-2 sm:col-span-1">
               <input
-                type="date"
-                value={purchaseDate}
-                onChange={(e) => setPurchaseDate(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                className={inputClass}
+                placeholder={t("pur.searchProduct")}
+                value={productSearch}
+                onChange={(e) => onProductSearch(e.target.value)}
               />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Notes
-            </label>
-            <input
-              type="text"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-            />
-          </div>
-
-          <div className="border-t border-gray-100 pt-4">
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Add Product</h2>
-            <div className="flex gap-2 items-end relative">
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  placeholder="Search product by name, SKU, barcode..."
-                  value={productSearch}
-                  onChange={(e) => {
-                    setProductSearch(e.target.value);
-                    setSelectedProduct(null);
-                  }}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2"
-                />
-                {productResults.length > 0 && (
-                  <ul className="absolute z-10 bg-white border border-gray-200 rounded-md w-full mt-1 shadow-lg max-h-48 overflow-auto">
-                    {productResults.map((p) => (
-                      <li
-                        key={p.id}
+              {productResults.length > 0 && (
+                <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                  {productResults.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
                         onClick={() => selectProduct(p)}
-                        className="px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
                       >
-                        {p.name} — {p.sku}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <input
-                type="number"
-                placeholder="Qty"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-                className="w-20 border border-gray-300 rounded-md px-3 py-2"
-              />
-              <input
-                type="number"
-                step="0.01"
-                placeholder="Unit Cost"
-                value={unitCost}
-                onChange={(e) => setUnitCost(e.target.value)}
-                className="w-28 border border-gray-300 rounded-md px-3 py-2"
-              />
-              <button
-                type="button"
-                onClick={addItem}
-                className="bg-gray-700 text-white px-4 py-2 rounded-md hover:bg-gray-800 transition"
-              >
-                + Add
-              </button>
+                        {p.name} <span className="text-slate-400">— {p.sku}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
+            <input
+              type="number"
+              min="0"
+              className={inputClass}
+              placeholder={t("pur.qty")}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              className={inputClass}
+              placeholder={t("pur.unitCost")}
+              value={unitCost}
+              onChange={(e) => setUnitCost(e.target.value)}
+            />
+            <Button variant="secondary" onClick={addItem}>
+              + {t("pur.add")}
+            </Button>
           </div>
 
           {items.length > 0 && (
-            <table className="w-full text-sm border-t border-gray-100 mt-2">
-              <thead className="text-left text-gray-500">
-                <tr>
-                  <th className="py-2">Product</th>
-                  <th className="py-2">SKU</th>
-                  <th className="py-2">Qty</th>
-                  <th className="py-2">Unit Cost</th>
-                  <th className="py-2">Line Total</th>
-                  <th className="py-2"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {items.map((i) => (
-                  <tr key={i.productId}>
-                    <td className="py-2">{i.productName}</td>
-                    <td className="py-2">{i.sku}</td>
-                    <td className="py-2">{i.quantity}</td>
-                    <td className="py-2">{i.unitCost.toFixed(2)}</td>
-                    <td className="py-2">{(i.quantity * i.unitCost).toFixed(2)}</td>
-                    <td className="py-2">
-                      <button
-                        type="button"
-                        onClick={() => removeItem(i.productId)}
-                        className="text-red-600 hover:underline"
-                      >
-                        Remove
-                      </button>
-                    </td>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className={thClass}>{t("inv.product")}</th>
+                    <th className={thClass}>SKU</th>
+                    <th className={`${thClass} text-right`}>{t("pur.qty")}</th>
+                    <th className={`${thClass} text-right`}>{t("pur.unitCost")}</th>
+                    <th className={`${thClass} text-right`}>{t("pur.lineTotal")}</th>
+                    <th className={thClass}></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          <div className="border-t border-gray-100 pt-4 space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-600">Subtotal</span>
-              <span>{subtotal.toFixed(2)}</span>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {items.map((i) => (
+                    <tr key={i.productId}>
+                      <td className={`${tdClass} font-medium text-slate-900`}>{i.productName}</td>
+                      <td className={tdClass}>{i.sku}</td>
+                      <td className={`${tdClass} text-right`}>{formatNumber(i.quantity)}</td>
+                      <td className={`${tdClass} text-right`}>{formatMoney(i.unitCost)}</td>
+                      <td className={`${tdClass} text-right`}>{formatMoney(i.quantity * i.unitCost)}</td>
+                      <td className={tdClass}>
+                        <Button size="sm" variant="ghost" className="!text-red-600" onClick={() => removeItem(i.productId)}>
+                          {t("pur.remove")}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600">Discount</span>
+          )}
+        </Card>
+
+        <Card>
+          <div className="ml-auto max-w-xs space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-slate-600">{t("pur.subtotal")}</span>
+              <span>{formatMoney(subtotal)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-slate-600">{t("pur.discount")}</span>
               <input
                 type="number"
+                min="0"
                 step="0.01"
+                className={`${inputClass} !w-28 text-right`}
                 value={discountAmount}
                 onChange={(e) => setDiscountAmount(e.target.value)}
-                className="w-28 border border-gray-300 rounded-md px-2 py-1 text-right"
               />
             </div>
-            <div className="flex justify-between font-bold text-gray-800 pt-1">
-              <span>Total</span>
-              <span>{total.toFixed(2)}</span>
+            <div className="flex justify-between border-t border-slate-100 pt-2 text-base font-bold text-slate-900">
+              <span>{t("pur.total")}</span>
+              <span>{formatMoney(total)}</span>
             </div>
           </div>
+        </Card>
 
-          <div className="flex gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 transition"
-            >
-              {isSaving ? "Saving..." : "Save Draft"}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/purchases")}
-              className="border border-gray-300 px-4 py-2 rounded-md hover:bg-gray-50 transition"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
+        {error && (
+          <p className="text-sm text-red-600" role="alert">
+            {error}
+          </p>
+        )}
+
+        <div className="flex gap-3">
+          <Button type="submit" loading={saving}>
+            {t("pur.saveDraft")}
+          </Button>
+          <Button variant="secondary" onClick={() => navigate("/purchases")} disabled={saving}>
+            {t("common.cancel")}
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }

@@ -1,124 +1,123 @@
-import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getSupplier, getSupplierPurchases, type Supplier } from "../api/suppliers";
+import { getSupplier, getSupplierPurchases } from "../api/suppliers";
+import type { PurchaseStatus } from "../api/purchases";
+import { useI18n } from "../i18n/useI18n";
+import { useAsyncData } from "../lib/useAsyncData";
+import { formatDate, formatMoney } from "../lib/format";
+import PageHeader from "../components/ui/PageHeader";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import StatusBadge from "../components/ui/StatusBadge";
+import { EmptyState, ErrorState, LoadingSkeleton } from "../components/ui/States";
+import { tdClass, thClass } from "../components/ui/formStyles";
 
 interface RecentPurchase {
   id: number;
   purchaseNumber: string;
   purchaseDate: string;
-  status: string;
+  status: PurchaseStatus;
   totalAmount: number;
 }
 
+const TONE: Record<PurchaseStatus, "gray" | "green" | "red"> = {
+  Draft: "gray",
+  Confirmed: "green",
+  Cancelled: "red",
+};
+
 export default function SupplierProfilePage() {
   const { id } = useParams();
-  const [supplier, setSupplier] = useState<Supplier | null>(null);
-  const [purchases, setPurchases] = useState<RecentPurchase[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { t } = useI18n();
 
-  useEffect(() => {
-    if (!id) return;
+  const { data, loading, error, reload } = useAsyncData(async () => {
+    const supplierId = Number(id);
+    const [supplier, purchases] = await Promise.all([
+      getSupplier(supplierId),
+      getSupplierPurchases(supplierId).catch(() => ({ items: [] })),
+    ]);
+    return { supplier, purchases: purchases.items as RecentPurchase[] };
+  }, id ?? "");
 
-    getSupplier(Number(id))
-      .then(setSupplier)
-      .catch(() => setError("Supplier not found."))
-      .finally(() => setIsLoading(false));
+  if (loading) return <LoadingSkeleton rows={6} />;
+  if (error || !data) return <ErrorState message={t("sup.notFound")} onRetry={reload} />;
 
-    getSupplierPurchases(Number(id))
-      .then((r) => setPurchases(r.items))
-      .catch(() => {});
-  }, [id]);
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-500">Loading...</p>
-      </div>
-    );
-  }
-
-  if (error || !supplier) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-red-600">{error ?? "Supplier not found."}</p>
-      </div>
-    );
-  }
+  const { supplier, purchases } = data;
+  const details: [string, string | null][] = [
+    [t("sup.contact"), supplier.contactPerson],
+    [t("sup.phone"), supplier.phone],
+    [t("sup.email"), supplier.email],
+    [t("sup.address"), supplier.address],
+    [t("sup.notes"), supplier.notes],
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
-        <div className="flex justify-between items-start mb-6">
-          <h1 className="text-xl font-bold text-gray-800">{supplier.name}</h1>
-          <span className={supplier.isActive ? "text-green-600 font-medium" : "text-gray-400"}>
-            {supplier.isActive ? "Active" : "Inactive"}
-          </span>
-        </div>
-
-        <dl className="space-y-3 text-sm">
-          <div>
-            <dt className="text-gray-500">Contact Person</dt>
-            <dd className="text-gray-800">{supplier.contactPerson ?? "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-gray-500">Phone</dt>
-            <dd className="text-gray-800">{supplier.phone ?? "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-gray-500">Email</dt>
-            <dd className="text-gray-800">{supplier.email ?? "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-gray-500">Address</dt>
-            <dd className="text-gray-800">{supplier.address ?? "—"}</dd>
-          </div>
-        </dl>
-
-        <div className="mt-6 pt-6 border-t border-gray-100">
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="text-sm font-semibold text-gray-700">Recent Purchases</h2>
-            <Link to="/purchases" className="text-blue-600 hover:underline text-sm">
-              View All Purchases
+    <div className="mx-auto max-w-4xl">
+      <PageHeader
+        title={supplier.name}
+        actions={
+          <>
+            <StatusBadge
+              label={supplier.isActive ? t("common.active") : t("common.inactive")}
+              tone={supplier.isActive ? "green" : "gray"}
+            />
+            <Link to="/suppliers">
+              <Button variant="secondary">{t("common.back")}</Button>
             </Link>
-          </div>
+          </>
+        }
+      />
 
-          {purchases.length === 0 ? (
-            <p className="text-gray-500 text-sm">No purchases yet.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="text-left text-gray-500">
+      <Card className="mb-4">
+        <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+          {details.map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-slate-500">{label}</dt>
+              <dd className="font-medium text-slate-900">{value || "—"}</dd>
+            </div>
+          ))}
+        </dl>
+      </Card>
+
+      <Card className="overflow-hidden !p-0">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">{t("sup.recent")}</h2>
+          <Link to="/purchases" className="text-sm text-blue-600 hover:underline">
+            {t("sup.viewAll")}
+          </Link>
+        </div>
+        {purchases.length === 0 ? (
+          <EmptyState message={t("sup.noPurchases")} />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-50">
                 <tr>
-                  <th className="py-1">Purchase #</th>
-                  <th className="py-1">Date</th>
-                  <th className="py-1">Status</th>
-                  <th className="py-1">Total</th>
+                  <th className={thClass}>{t("pur.number")}</th>
+                  <th className={thClass}>{t("common.date")}</th>
+                  <th className={thClass}>{t("common.status")}</th>
+                  <th className={`${thClass} text-right`}>{t("pur.total")}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-slate-100">
                 {purchases.map((p) => (
-                  <tr key={p.id}>
-                    <td className="py-1">
-                      <Link to={`/purchases/${p.id}`} className="text-blue-600 hover:underline">
+                  <tr key={p.id} className="hover:bg-slate-50">
+                    <td className={tdClass}>
+                      <Link to={`/purchases/${p.id}`} className="font-medium text-blue-600 hover:underline">
                         {p.purchaseNumber}
                       </Link>
                     </td>
-                    <td className="py-1">{new Date(p.purchaseDate).toLocaleDateString()}</td>
-                    <td className="py-1">{p.status}</td>
-                    <td className="py-1">{p.totalAmount.toFixed(2)}</td>
+                    <td className={tdClass}>{formatDate(p.purchaseDate)}</td>
+                    <td className={tdClass}>
+                      <StatusBadge label={t(`pur.status.${p.status}`)} tone={TONE[p.status] ?? "gray"} />
+                    </td>
+                    <td className={`${tdClass} text-right`}>{formatMoney(p.totalAmount)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
-
-        <div className="mt-6">
-          <Link to="/suppliers" className="text-blue-600 hover:underline text-sm">
-            Back to list
-          </Link>
-        </div>
-      </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

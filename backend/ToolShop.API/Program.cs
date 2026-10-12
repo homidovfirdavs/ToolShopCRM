@@ -10,8 +10,19 @@ using ToolShop.Infrastructure.Persistence;
 using Scalar.AspNetCore;
 using ToolShop.Domain.Authorization;
 using ToolShop.API.Middleware;
+using ToolShop.API.Health;
+using System.Diagnostics;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Hide the Kestrel "Server" header and cap request bodies (1 MB; no file uploads exist).
+builder.WebHost.ConfigureKestrel(o =>
+{
+    o.AddServerHeader = false;
+    o.Limits.MaxRequestBodySize = 1_048_576;
+});
 
 // --- Services ---
 
@@ -39,7 +50,7 @@ builder.Services.AddOpenApi(options =>
             }
         };
 
-        foreach (var operation in document.Paths.Values.SelectMany(p => p.Operations))
+        foreach (var operation in document.Paths.Values.Where(p => p.Operations is not null).SelectMany(p => p.Operations!))
         {
             operation.Value.Security ??= [];
             operation.Value.Security.Add(new Microsoft.OpenApi.OpenApiSecurityRequirement
@@ -56,11 +67,47 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 const string FrontendCorsPolicy = "FrontendCorsPolicy";
 
+// CORS allowlist is configuration-driven (Cors:AllowedOrigins). No wildcard.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    is { Length: > 0 } configured
+    ? configured
+    : new[] { "http://localhost:5173" };
+
+// Rate limiting: strict on auth endpoints (brute force), generous globally.
+var authPermit = builder.Configuration.GetValue("RateLimiting:AuthPermitPerMinute", 20);
+var globalPermit = builder.Configuration.GetValue("RateLimiting:GlobalPermitPerMinute", 600);
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = globalPermit,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+    o.AddPolicy("auth", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = authPermit,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+});
+
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(), tags: new[] { "live" })
+    .AddCheck<DbReadinessHealthCheck>("database", tags: new[] { "ready" });
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(FrontendCorsPolicy, policy =>
     {
-        policy.WithOrigins("http://localhost:5173")
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -70,7 +117,7 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
-    options.Password.RequiredLength = 6;
+    options.Password.RequiredLength = 8;
     options.Password.RequireNonAlphanumeric = false;
 
     // Login protection (brute-force lockout)
@@ -83,6 +130,8 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("Jwt:Key is not configured.");
+if (!builder.Environment.IsDevelopment() && Encoding.UTF8.GetByteCount(jwtKey) < 32)
+    throw new InvalidOperationException("Jwt:Key must be at least 32 bytes outside Development.");
 var jwtIssuer = builder.Configuration["Jwt:Issuer"]
     ?? throw new InvalidOperationException("Jwt:Issuer is not configured.");
 var jwtAudience = builder.Configuration["Jwt:Audience"]
@@ -106,6 +155,19 @@ builder.Services.AddAuthentication(options =>
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(30)
         };
+
+        // A deactivated (or removed) user loses access immediately, not only when the access token expires.
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var userId = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                var active = userId is not null &&
+                    await db.Users.AsNoTracking().AnyAsync(u => u.Id == userId && u.IsActive);
+                if (!active) context.Fail("User is inactive or no longer exists.");
+            }
+        };
     });
 
 builder.Services.AddAuthorization(options =>
@@ -127,6 +189,10 @@ builder.Services.AddScoped<ToolShop.Infrastructure.Inventory.InventoryService>()
 builder.Services.AddScoped<ToolShop.Infrastructure.Purchases.PurchaseService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Sales.OrderService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Payments.PaymentService>();
+builder.Services.AddScoped<ToolShop.Infrastructure.Finance.ExpenseService>();
+builder.Services.AddScoped<ToolShop.Infrastructure.Finance.FinanceService>();
+builder.Services.AddScoped<ToolShop.Infrastructure.Dashboard.DashboardService>();
+builder.Services.AddScoped<ToolShop.Infrastructure.Reports.ReportsService>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
@@ -136,21 +202,72 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 
+// Request id + structured request log (method, path WITHOUT query string, status, duration).
+// Never logs bodies, headers, or tokens.
+app.Use(async (ctx, next) =>
+{
+    var requestId = ctx.TraceIdentifier;
+    ctx.Response.Headers["X-Request-Id"] = requestId;
+    var sw = Stopwatch.StartNew();
+    var log = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("RequestLog");
+    using (log.BeginScope(new Dictionary<string, object> { ["RequestId"] = requestId }))
+    {
+        try { await next(); }
+        finally
+        {
+            sw.Stop();
+            if (!ctx.Request.Path.StartsWithSegments("/health"))
+                log.LogInformation("HTTP {Method} {Path} -> {Status} in {Elapsed} ms",
+                    ctx.Request.Method, ctx.Request.Path.Value, ctx.Response.StatusCode, sw.ElapsedMilliseconds);
+        }
+    }
+});
+
+// Security headers.
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.OnStarting(() =>
+    {
+        var h = ctx.Response.Headers;
+        h["X-Content-Type-Options"] = "nosniff";
+        h["X-Frame-Options"] = "DENY";
+        h["Referrer-Policy"] = "no-referrer";
+        if (ctx.Request.Path.StartsWithSegments("/api"))
+            h["Cache-Control"] = "no-store";
+        return Task.CompletedTask;
+    });
+    await next();
+});
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
     app.MapScalarApiReference();
 }
 
-app.UseHttpsRedirection();
+// Behind Nginx (TLS terminated there) set Https:Redirect=false.
+// Forwarded headers: set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true in the container.
+if (app.Configuration.GetValue("Https:Redirect", true))
+{
+    if (!app.Environment.IsDevelopment()) app.UseHsts();
+    app.UseHttpsRedirection();
+}
 
 app.UseCors(FrontendCorsPolicy);
+
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-
-app.UseExceptionHandler();
+app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = c => c.Tags.Contains("live")
+});
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = c => c.Tags.Contains("ready")
+});
 
 app.MapControllers();
 
@@ -163,6 +280,12 @@ using (var scope = app.Services.CreateScope())
     var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     await AdminSeeder.SeedAsync(userManager, configuration, logger);
+
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await ToolShop.Infrastructure.Finance.ExpenseCategorySeeder.SeedAsync(dbContext);
 }
 
 app.Run();
+
+// Required so integration tests can use WebApplicationFactory<Program>.
+public partial class Program { }

@@ -1,0 +1,82 @@
+server_tokens off;
+limit_req_zone $binary_remote_addr zone=api_rl:10m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=auth_rl:10m rate=10r/m;
+limit_req_status 429;
+
+upstream toolshop_api {
+    server api:8080;
+    keepalive 16;
+}
+
+# ---- HTTP: redirect everything to HTTPS (plus a tiny local health probe) ----
+server {
+    listen 8080;
+    server_name _;
+    location = /nginx-health { access_log off; default_type text/plain; return 200 "ok\n"; }
+    location / { return 301 https://$host:${PUBLIC_HTTPS_PORT}$request_uri; }
+}
+
+# ---- HTTPS ----
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 1m;
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml application/manifest+json;
+
+    # never serve dotfiles
+    location ~ /\. { deny all; return 404; }
+
+    # liveness only; /health/ready (database) stays internal to Docker
+    location = /health/live {
+        include /etc/nginx/conf.d/security-headers.inc;
+        proxy_pass http://toolshop_api;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # /health/ready and anything else under /health/ is internal (Docker healthcheck only)
+    location /health/ { return 404; }
+
+    # API; the API sets its own Cache-Control: no-store
+    location /api/auth/ {
+        limit_req zone=auth_rl burst=10 nodelay;
+        include /etc/nginx/conf.d/security-headers.inc;
+        include /etc/nginx/conf.d/proxy.inc;
+    }
+    location /api/ {
+        limit_req zone=api_rl burst=40 nodelay;
+        include /etc/nginx/conf.d/security-headers.inc;
+        include /etc/nginx/conf.d/proxy.inc;
+    }
+
+    # PWA entry files must always be revalidated or users keep an old app
+    location ~ ^/(sw\.js|registerSW\.js|manifest\.webmanifest|index\.html)$ {
+        include /etc/nginx/conf.d/security-headers.inc;
+        add_header Cache-Control "no-cache" always;
+    }
+    # hashed build output
+    location /assets/ {
+        include /etc/nginx/conf.d/security-headers.inc;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+    # SPA fallback
+    location / {
+        include /etc/nginx/conf.d/security-headers.inc;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri $uri/ /index.html;
+    }
+}

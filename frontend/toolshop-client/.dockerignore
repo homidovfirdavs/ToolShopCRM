@@ -1,0 +1,9 @@
+node_modules/
+dist*/
+e2e*/
+test-results/
+ui-shots/
+*.local
+.env*
+Dockerfile
+.dockerignore

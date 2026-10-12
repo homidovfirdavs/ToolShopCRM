@@ -19,6 +19,13 @@ public static class Permissions
     public const string UsersManage = "Users.Manage";
     public const string ReportsView = "Reports.View";
 
+    // TASK 09
+    public const string FinanceProfitView = "Finance.Profit.View";
+    public const string ExpensesView = "Expenses.View";
+    public const string ExpensesCreate = "Expenses.Create";
+    public const string ExpensesUpdate = "Expenses.Update";
+    public const string ExpensesVoid = "Expenses.Void";
+
     public static readonly Dictionary<string, string[]> RolePermissions = new()
     {
         ["Admin"] =
@@ -26,14 +33,16 @@ public static class Permissions
             ProductsView, ProductsCreate, ProductsUpdate, ProductsDelete,
             SalesView, SalesCreate, SalesCancel, SalesReturn,
             InventoryView, InventoryAdjust,
-            FinanceView, UsersManage, ReportsView
+            FinanceView, UsersManage, ReportsView,
+            FinanceProfitView, ExpensesView, ExpensesCreate, ExpensesUpdate, ExpensesVoid
         ],
         ["Manager"] =
         [
             ProductsView, ProductsCreate, ProductsUpdate,
-            SalesView, SalesCancel, SalesReturn,
+            SalesView, SalesCreate, SalesCancel, SalesReturn,
             InventoryView, InventoryAdjust,
-            FinanceView, ReportsView
+            FinanceView, ReportsView,
+            FinanceProfitView, ExpensesView, ExpensesCreate, ExpensesUpdate
         ],
         ["Cashier"] =
         [

@@ -2,6 +2,10 @@ import apiClient from "./client";
 
 export interface Category {
   id: number;
+  /** Real number of ACTIVE products in this category. */
+  productCount?: number;
+  /** All products in this category including inactive ones. */
+  totalProductCount?: number;
   name: string;
   description: string | null;
   isActive: boolean;

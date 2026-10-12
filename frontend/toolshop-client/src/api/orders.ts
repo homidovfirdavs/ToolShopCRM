@@ -1,5 +1,6 @@
 import apiClient from "./client";
 import type { PagedResult } from "./catalog";
+import type { PaymentMethod } from "./payments";
 
 export type OrderStatus = "Draft" | "Completed" | "Cancelled" | "Returned" | "PartiallyReturned";
 
@@ -32,6 +33,11 @@ export interface Order {
   createdAt: string;
   completedAt: string | null;
   cancelledAt: string | null;
+  /** Filled only when status is Returned. */
+  returnedAt?: string | null;
+  returnedByUsername?: string | null;
+  returnReason?: string | null;
+  refundedAmount?: number | null;
 }
 
 export interface OrderListItem {
@@ -80,11 +86,25 @@ export async function createOrder(values: OrderFormValues) {
   return res.data;
 }
 
-export async function completeOrder(id: number): Promise<Order> {
-  const res = await apiClient.post(`/orders/${id}/complete`);
+/** Payment taken at the moment of sale; saved in the same server transaction as the completion. */
+export interface InitialPayment {
+  amount: number;
+  method: PaymentMethod;
+  referenceNumber?: string;
+  notes?: string;
+}
+
+export async function completeOrder(id: number, initialPayment?: InitialPayment): Promise<Order> {
+  const res = await apiClient.post(`/orders/${id}/complete`, initialPayment ? { initialPayment } : undefined);
   return res.data;
 }
 
 export async function cancelOrder(id: number) {
   await apiClient.post(`/orders/${id}/cancel`);
+}
+
+/** Full return of a completed order (Admin/Manager). Stock goes back, valid payments are marked Refunded. */
+export async function returnOrder(id: number, reason: string): Promise<Order> {
+  const res = await apiClient.post(`/orders/${id}/return`, { reason });
+  return res.data;
 }

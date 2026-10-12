@@ -2,15 +2,31 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
   getSuppliers,
+  getSupplier,
   createSupplier,
   updateSupplier,
   deactivateSupplier,
-  type Supplier,
+  type SupplierFormValues,
   type SupplierListItem,
 } from "../api/suppliers";
-import { useAuth } from "../context/AuthContext";
+import { errorMessage } from "../lib/apiError";
+import { usePermissions } from "../auth/usePermissions";
+import { useI18n } from "../i18n/useI18n";
+import { useAsyncData } from "../lib/useAsyncData";
+import PageHeader from "../components/ui/PageHeader";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import Modal from "../components/ui/Modal";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import FormField from "../components/ui/FormField";
+import StatusBadge from "../components/ui/StatusBadge";
+import SearchInput from "../components/ui/SearchInput";
+import Pagination from "../components/ui/Pagination";
+import { EmptyState, ErrorState, LoadingSkeleton } from "../components/ui/States";
+import { useToast } from "../components/ui/useToast";
+import { inputClass, tdClass, thClass } from "../components/ui/formStyles";
 
-const emptyForm = {
+const emptyForm: SupplierFormValues = {
   name: "",
   contactPerson: "",
   phone: "",
@@ -19,236 +35,333 @@ const emptyForm = {
   notes: "",
 };
 
+interface Filters {
+  search: string;
+  status: string;
+  page: number;
+}
+
 export default function SuppliersPage() {
-  const { user } = useAuth();
-  const canManage =
-    user?.roles.includes("Admin") ||
-    user?.roles.includes("Manager") ||
-    user?.roles.includes("Warehouse");
-  const canDeactivate = user?.roles.includes("Admin") || user?.roles.includes("Manager");
+  const { t } = useI18n();
+  const toast = useToast();
+  const { hasRole } = usePermissions();
+  const canManage = hasRole("Admin", "Manager", "Warehouse");
+  const canDeactivate = hasRole("Admin", "Manager");
 
-  const [items, setItems] = useState<SupplierListItem[]>([]);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("active");
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<Filters>({ search: "", status: "active", page: 1 });
+  const [searchText, setSearchText] = useState("");
 
-  const [form, setForm] = useState(emptyForm);
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setFilters((f) => (f.search === searchText ? f : { ...f, search: searchText, page: 1 }));
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [searchText]);
+
+  const list = useAsyncData(
+    () =>
+      getSuppliers({
+        search: filters.search || undefined,
+        isActive: filters.status === "" ? undefined : filters.status === "active",
+        page: filters.page,
+        pageSize: 20,
+      }),
+    JSON.stringify(filters),
+  );
+
+  // ---- create / edit modal ----
+  const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingActive, setEditingActive] = useState(true);
+  const [form, setForm] = useState<SupplierFormValues>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  async function load() {
-    setIsLoading(true);
-    setError(null);
+  function openCreate() {
+    setEditingId(null);
+    setEditingActive(true);
+    setForm(emptyForm);
+    setFormError(null);
+    setModalOpen(true);
+  }
+
+  async function openEdit(s: SupplierListItem) {
     try {
-      const result = await getSuppliers({
-        search: search || undefined,
-        isActive: status === "" ? undefined : status === "active",
+      const full = await getSupplier(s.id);
+      setEditingId(full.id);
+      setEditingActive(full.isActive);
+      setForm({
+        name: full.name,
+        contactPerson: full.contactPerson ?? "",
+        phone: full.phone ?? "",
+        email: full.email ?? "",
+        address: full.address ?? "",
+        notes: full.notes ?? "",
       });
-      setItems(result.items);
+      setFormError(null);
+      setModalOpen(true);
     } catch {
-      setError("Unable to load suppliers.");
-    } finally {
-      setIsLoading(false);
+      toast.error(t("common.loadFailed"));
     }
   }
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status]);
-
-  function startEdit(s: Supplier | SupplierListItem) {
-    setEditingId(s.id);
-    setForm({
-      name: s.name,
-      contactPerson: s.contactPerson ?? "",
-      phone: s.phone ?? "",
-      email: s.email ?? "",
-      address: "address" in s ? (s.address ?? "") : "",
-      notes: "notes" in s ? (s.notes ?? "") : "",
-    });
-    setFormError(null);
-  }
-
-  function cancelEdit() {
-    setEditingId(null);
-    setForm(emptyForm);
-    setFormError(null);
+  function closeModal() {
+    if (saving) return;
+    setModalOpen(false);
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (saving) return;
     setFormError(null);
+    if (!form.name.trim()) return setFormError(t("sup.nameRequired"));
 
-    if (!form.name.trim()) {
-      setFormError("Supplier name is required.");
-      return;
-    }
-
+    setSaving(true);
     try {
-      if (editingId) {
-        await updateSupplier(editingId, { ...form, isActive: true });
-      } else {
-        await createSupplier(form);
-      }
-      cancelEdit();
-      load();
-    } catch {
-      setFormError("Failed to save supplier.");
+      if (editingId) await updateSupplier(editingId, { ...form, isActive: editingActive });
+      else await createSupplier(form);
+      toast.success(t("common.saved"));
+      setModalOpen(false);
+      list.reload();
+    } catch (err) {
+      setFormError(errorMessage(err) ?? t("common.saveFailed"));
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function handleDeactivate(id: number) {
-    if (!confirm("Deactivate this supplier?")) return;
+  // ---- deactivate / activate ----
+  const [toDeactivate, setToDeactivate] = useState<SupplierListItem | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function confirmDeactivate() {
+    if (!toDeactivate || busy) return;
+    setBusy(true);
     try {
-      await deactivateSupplier(id);
-      load();
+      await deactivateSupplier(toDeactivate.id);
+      toast.success(t("common.deactivated"));
+      setToDeactivate(null);
+      list.reload();
     } catch {
-      alert("Failed to deactivate supplier.");
+      toast.error(t("common.deactivateFailed"));
+    } finally {
+      setBusy(false);
     }
   }
+
+  async function activate(s: SupplierListItem) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const full = await getSupplier(s.id);
+      await updateSupplier(s.id, {
+        name: full.name,
+        contactPerson: full.contactPerson ?? "",
+        phone: full.phone ?? "",
+        email: full.email ?? "",
+        address: full.address ?? "",
+        notes: full.notes ?? "",
+        isActive: true,
+      });
+      toast.success(t("common.activated"));
+      list.reload();
+    } catch {
+      toast.error(t("common.saveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const data = list.data;
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">Suppliers</h1>
+    <div className="w-full">
+      <PageHeader
+        title={t("sup.title")}
+        actions={canManage ? <Button onClick={openCreate}>+ {t("sup.add")}</Button> : undefined}
+      />
 
-        {canManage && (
-          <form
-            onSubmit={handleSubmit}
-            className="bg-white rounded-lg shadow p-4 mb-4 space-y-3"
-          >
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                type="text"
-                placeholder="Supplier name *"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="border border-gray-300 rounded-md px-3 py-2"
-              />
-              <input
-                type="text"
-                placeholder="Contact person"
-                value={form.contactPerson}
-                onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
-                className="border border-gray-300 rounded-md px-3 py-2"
-              />
-              <input
-                type="text"
-                placeholder="Phone"
-                value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                className="border border-gray-300 rounded-md px-3 py-2"
-              />
-              <input
-                type="text"
-                placeholder="Email"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                className="border border-gray-300 rounded-md px-3 py-2"
-              />
-            </div>
-            {formError && <p className="text-red-600 text-sm">{formError}</p>}
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
-              >
-                {editingId ? "Update" : "Add Supplier"}
-              </button>
-              {editingId && (
-                <button
-                  type="button"
-                  onClick={cancelEdit}
-                  className="border border-gray-300 px-4 py-2 rounded-md hover:bg-gray-50 transition"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
-          </form>
-        )}
-
-        <div className="bg-white rounded-lg shadow p-4 mb-4 flex flex-wrap gap-3">
-          <input
-            type="text"
-            placeholder="Search suppliers..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 flex-1 min-w-[200px]"
+      <Card className="mb-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <SearchInput
+            className="sm:col-span-2"
+            value={searchText}
+            onChange={setSearchText}
+            placeholder={t("sup.search")}
           />
           <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2"
+            className={inputClass}
+            value={filters.status}
+            onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value, page: 1 }))}
           >
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-            <option value="">All</option>
+            <option value="active">{t("common.active")}</option>
+            <option value="inactive">{t("common.inactive")}</option>
+            <option value="">{t("common.all")}</option>
           </select>
         </div>
+      </Card>
 
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          {isLoading ? (
-            <p className="p-6 text-center text-gray-500">Loading suppliers...</p>
-          ) : error ? (
-            <p className="p-6 text-center text-red-600">{error}</p>
-          ) : items.length === 0 ? (
-            <p className="p-6 text-center text-gray-500">No suppliers found.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left text-gray-600">
+      <Card className="overflow-hidden !p-0">
+        {list.loading && <LoadingSkeleton />}
+        {list.error && <ErrorState message={t("common.loadFailed")} onRetry={list.reload} />}
+        {!list.loading && !list.error && data && data.items.length === 0 && <EmptyState message={t("sup.empty")} />}
+        {!list.loading && !list.error && data && data.items.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3">Supplier</th>
-                  <th className="px-4 py-3">Contact Person</th>
-                  <th className="px-4 py-3">Phone</th>
-                  <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Actions</th>
+                  <th className={thClass}>{t("sup.supplier")}</th>
+                  <th className={thClass}>{t("sup.contact")}</th>
+                  <th className={thClass}>{t("sup.phone")}</th>
+                  <th className={thClass}>{t("sup.email")}</th>
+                  <th className={thClass}>{t("common.status")}</th>
+                  <th className={thClass}>{t("common.actions")}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {items.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <Link to={`/suppliers/${s.id}`} className="text-blue-600 hover:underline">
+              <tbody className="divide-y divide-slate-100">
+                {data.items.map((s) => (
+                  <tr key={s.id} className="hover:bg-slate-50">
+                    <td className={tdClass}>
+                      <Link to={`/suppliers/${s.id}`} className="font-medium text-blue-600 hover:underline">
                         {s.name}
                       </Link>
                     </td>
-                    <td className="px-4 py-3">{s.contactPerson ?? "—"}</td>
-                    <td className="px-4 py-3">{s.phone ?? "—"}</td>
-                    <td className="px-4 py-3">{s.email ?? "—"}</td>
-                    <td className="px-4 py-3">
-                      <span className={s.isActive ? "text-green-600 font-medium" : "text-gray-400"}>
-                        {s.isActive ? "Active" : "Inactive"}
-                      </span>
+                    <td className={tdClass}>{s.contactPerson ?? "—"}</td>
+                    <td className={tdClass}>{s.phone ?? "—"}</td>
+                    <td className={tdClass}>{s.email ?? "—"}</td>
+                    <td className={tdClass}>
+                      <StatusBadge
+                        label={s.isActive ? t("common.active") : t("common.inactive")}
+                        tone={s.isActive ? "green" : "gray"}
+                      />
                     </td>
-                    <td className="px-4 py-3 space-x-3">
-                      {canManage && (
-                        <button
-                          onClick={() => startEdit(s)}
-                          className="text-blue-600 hover:underline"
-                        >
-                          Edit
-                        </button>
-                      )}
-                      {canDeactivate && s.isActive && (
-                        <button
-                          onClick={() => handleDeactivate(s.id)}
-                          className="text-red-600 hover:underline"
-                        >
-                          Deactivate
-                        </button>
-                      )}
+                    <td className={tdClass}>
+                      <div className="flex flex-wrap gap-2">
+                        {canManage && (
+                          <Button size="sm" variant="secondary" onClick={() => openEdit(s)}>
+                            {t("common.edit")}
+                          </Button>
+                        )}
+                        {canDeactivate && s.isActive && (
+                          <Button size="sm" variant="ghost" className="!text-red-600" onClick={() => setToDeactivate(s)}>
+                            {t("common.deactivate")}
+                          </Button>
+                        )}
+                        {canDeactivate && !s.isActive && (
+                          <Button size="sm" variant="ghost" className="!text-green-700" onClick={() => activate(s)}>
+                            {t("common.activate")}
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </Card>
+
+      {data && (
+        <Pagination
+          page={filters.page}
+          totalPages={data.totalPages}
+          totalItems={data.totalItems}
+          onChange={(page) => setFilters((f) => ({ ...f, page }))}
+        />
+      )}
+
+      <Modal
+        open={modalOpen}
+        title={editingId ? t("sup.edit") : t("sup.add")}
+        onClose={closeModal}
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeModal} disabled={saving}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" form="supplier-form" loading={saving}>
+              {t("common.save")}
+            </Button>
+          </>
+        }
+      >
+        <form id="supplier-form" onSubmit={handleSubmit} className="space-y-4">
+          <FormField label={t("common.name")} required>
+            <input
+              className={inputClass}
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              autoFocus
+            />
+          </FormField>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label={t("sup.contact")}>
+              <input
+                className={inputClass}
+                value={form.contactPerson}
+                onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
+              />
+            </FormField>
+            <FormField label={t("sup.phone")}>
+              <input
+                className={inputClass}
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              />
+            </FormField>
+          </div>
+          <FormField label={t("sup.email")}>
+            <input
+              className={inputClass}
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+            />
+          </FormField>
+          <FormField label={t("sup.address")}>
+            <input
+              className={inputClass}
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+            />
+          </FormField>
+          <FormField label={t("sup.notes")}>
+            <textarea
+              className={inputClass}
+              rows={2}
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            />
+          </FormField>
+          {editingId && canDeactivate && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={editingActive} onChange={(e) => setEditingActive(e.target.checked)} />
+              {t("common.active")}
+            </label>
           )}
-        </div>
-      </div>
+          {formError && (
+            <p className="text-sm text-red-600" role="alert">
+              {formError}
+            </p>
+          )}
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={toDeactivate !== null}
+        title={t("sup.deactivateTitle")}
+        message={
+          <>
+            <p className="font-medium text-slate-900">{toDeactivate?.name}</p>
+            <p className="mt-1">{t("sup.deactivateMsg")}</p>
+          </>
+        }
+        confirmLabel={t("common.deactivate")}
+        danger
+        loading={busy}
+        onConfirm={confirmDeactivate}
+        onCancel={() => setToDeactivate(null)}
+      />
     </div>
   );
 }

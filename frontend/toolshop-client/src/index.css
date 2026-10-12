@@ -1,1 +1,106 @@
 @import "tailwindcss";
+
+/* ---- Mobile / PWA basics ---- */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* No 300 ms tap delay / double-tap zoom on controls (touch devices). */
+button,
+a,
+input,
+select,
+textarea,
+label,
+summary {
+  touch-action: manipulation;
+}
+
+/* iOS Safari zooms the page when a field with font-size < 16px gets focus. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Installed app on a notched phone: keep content out of the status bar / home indicator. */
+@media (display-mode: standalone) {
+  body {
+    overscroll-behavior-y: none;
+  }
+}
+
+/* ---- Phone: data tables as cards (see src/lib/useStackedTables.ts) ----
+   Under 768px each row is a card; the first cell is its title, every other cell is "Label ..... value".
+   From 768px up none of this applies, so tablet and desktop tables are unchanged. */
+@media (max-width: 767px) {
+  table[data-stack] {
+    display: block;
+    width: 100%;
+  }
+  table[data-stack] thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  table[data-stack] tbody,
+  table[data-stack] tfoot,
+  table[data-stack] tr {
+    display: block;
+  }
+  table[data-stack] tr {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  table[data-stack] tbody tr:last-child {
+    border-bottom: 0;
+  }
+  table[data-stack] td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 1.75rem;
+    padding: 0.2rem 0;
+    border: 0;
+    text-align: right;
+    font-size: 0.9375rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  table[data-stack] td::before {
+    content: attr(data-label);
+    flex: none;
+    max-width: 45%;
+    text-align: left;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #64748b;
+  }
+  /* first cell = card title */
+  table[data-stack] td:first-child {
+    display: block; /* name + secondary lines (SKU, badge) stack instead of sitting side by side */
+    margin-bottom: 0.25rem;
+    text-align: left;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #0f172a;
+  }
+  table[data-stack] td:first-child::before,
+  table[data-stack] td[data-label=""]::before {
+    display: none;
+  }
+  /* cells without a header (action buttons) sit at the end of the card */
+  table[data-stack] td[data-label=""]:not(:first-child) {
+    justify-content: flex-end;
+    padding-top: 0.5rem;
+  }
+  table[data-stack] td:empty {
+    display: none;
+  }
+}

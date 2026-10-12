@@ -48,19 +48,20 @@ public class PaymentService
 
     public async Task<decimal> GetCustomerDebtAsync(int customerId)
     {
-        var orderIds = await _db.Orders
+        // Single query: per completed order, outstanding = max(0, total - valid payments). Debt is never stored.
+        var rows = await _db.Orders
             .AsNoTracking()
             .Where(o => o.CustomerId == customerId && o.Status == OrderStatus.Completed)
-            .Select(o => o.Id)
+            .Select(o => new
+            {
+                o.TotalAmount,
+                Paid = _db.Payments
+                    .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
+                    .Sum(p => (decimal?)p.Amount) ?? 0m
+            })
             .ToListAsync();
 
-        decimal totalDebt = 0;
-        foreach (var orderId in orderIds)
-        {
-            totalDebt += await GetOrderOutstandingBalanceAsync(orderId);
-        }
-
-        return totalDebt;
+        return rows.Sum(r => Math.Max(0m, r.TotalAmount - r.Paid));
     }
 
     public async Task<Payment> CreateAsync(
@@ -135,6 +136,7 @@ public class PaymentService
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "40001" && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
+                _db.ChangeTracker.Clear(); // drop half-applied entities so a retry cannot duplicate them
             }
             finally
             {
@@ -204,6 +206,7 @@ public class PaymentService
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "40001" && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
+                _db.ChangeTracker.Clear(); // drop half-applied entities so a retry cannot duplicate them
             }
             finally
             {

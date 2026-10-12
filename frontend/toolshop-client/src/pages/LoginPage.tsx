@@ -1,8 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { Wrench } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useI18n } from "../i18n/useI18n";
+import { LANGS } from "../i18n/translations";
+import Button from "../components/ui/Button";
+import FormField from "../components/ui/FormField";
+import { inputClass } from "../components/ui/formStyles";
 
 export default function LoginPage() {
+  const { t, lang, setLang } = useI18n();
   const [usernameOrEmail, setUsernameOrEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -14,75 +21,83 @@ export default function LoginPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (isLoading) return;
     setError(null);
 
     if (!usernameOrEmail.trim() || !password) {
-      setError("Please enter both username/email and password.");
+      setError(t("login.errEmpty"));
       return;
     }
 
     setIsLoading(true);
-
     try {
       await login(usernameOrEmail, password);
-      navigate("/dashboard");
+      navigate("/");
     } catch {
-      setError("Invalid username/email or password.");
+      setError(t("login.errInvalid"));
     } finally {
       setIsLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="w-full max-w-sm bg-white rounded-lg shadow-md p-8">
-        <h1 className="text-2xl font-bold text-center text-gray-800 mb-6">
-          TOOL SHOP CRM
-        </h1>
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-md">
+        <div className="mb-6 flex justify-end">
+          <div className="flex rounded-lg border border-slate-200 p-0.5" role="group" aria-label="Language">
+            {LANGS.map((l) => (
+              <button
+                key={l.code}
+                type="button"
+                onClick={() => setLang(l.code)}
+                aria-pressed={lang === l.code}
+                className={`rounded-md px-2 py-1 text-xs font-semibold ${
+                  lang === l.code ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-6 flex flex-col items-center gap-2">
+          <div className="rounded-xl bg-blue-600 p-3 text-white">
+            <Wrench size={24} />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900">{t("login.title")}</h1>
+        </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label
-              htmlFor="usernameOrEmail"
-              className="block text-sm font-medium text-gray-700 mb-1"
-            >
-              Username or Email
-            </label>
+          <FormField label={t("login.username")}>
             <input
-              id="usernameOrEmail"
               type="text"
+              className={inputClass}
               value={usernameOrEmail}
               onChange={(e) => setUsernameOrEmail(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               autoComplete="username"
+              autoFocus
             />
-          </div>
+          </FormField>
 
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-gray-700 mb-1"
-            >
-              Password
-            </label>
+          <FormField label={t("login.password")}>
             <div className="relative">
               <input
-                id="password"
                 type={showPassword ? "text" : "password"}
+                className={`${inputClass} pr-20`}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 pr-16"
                 autoComplete="current-password"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-500 hover:text-gray-700"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-slate-700"
               >
-                {showPassword ? "Hide" : "Show"}
+                {showPassword ? t("login.hide") : t("login.show")}
               </button>
             </div>
-          </div>
+          </FormField>
 
           {error && (
             <p className="text-sm text-red-600" role="alert">
@@ -90,13 +105,9 @@ export default function LoginPage() {
             </p>
           )}
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-600 text-white py-2 rounded-md font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-          >
-            {isLoading ? "Logging in..." : "Login"}
-          </button>
+          <Button type="submit" loading={isLoading} className="w-full !py-2.5">
+            {isLoading ? t("login.submitting") : t("login.submit")}
+          </Button>
         </form>
       </div>
     </div>

@@ -16,4 +16,9 @@ public class OrderItem
     public decimal UnitPrice { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal LineTotal { get; set; }
+
+    // TASK 09: cost snapshot at the moment of sale completion.
+    // Null means the sale was completed before TASK 09, or no cost source was found —
+    // Finance reports must treat null as "unknown cost", never as zero.
+    public decimal? CostAtSale { get; set; }
 }

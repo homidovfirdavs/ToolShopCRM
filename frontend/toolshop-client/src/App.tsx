@@ -1,197 +1,106 @@
-import PosPage from "./pages/PosPage";
-import OrdersPage from "./pages/OrdersPage";
-import OrderDetailsPage from "./pages/OrderDetailsPage";
-import SuppliersPage from "./pages/SuppliersPage";
-import SupplierProfilePage from "./pages/SupplierProfilePage";
-import PurchasesPage from "./pages/PurchasesPage";
-import PurchaseFormPage from "./pages/PurchaseFormPage";
-import PurchaseDetailsPage from "./pages/PurchaseDetailsPage";
+import { lazy, Suspense, type ReactNode } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { I18nProvider } from "./i18n/I18nProvider";
+import { ToastProvider } from "./components/ui/ToastProvider";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AppShell from "./components/layout/AppShell";
+import { homePathFor } from "./components/layout/navConfig";
+import { usePermissions } from "./auth/usePermissions";
 import LoginPage from "./pages/LoginPage";
-import DashboardPage from "./pages/DashboardPage";
-import ProductsPage from "./pages/ProductsPage";
-import ProductFormPage from "./pages/ProductFormPage";
-import CategoriesPage from "./pages/CategoriesPage";
-import BrandsPage from "./pages/BrandsPage";
-import CustomersPage from "./pages/CustomersPage";
-import CustomerFormPage from "./pages/CustomerFormPage";
-import CustomerProfilePage from "./pages/CustomerProfilePage";
-import InventoryPage from "./pages/InventoryPage";
-import InventoryMovementsPage from "./pages/InventoryMovementsPage";
+import { LoadingSkeleton } from "./components/ui/States";
+
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const ProductsPage = lazy(() => import("./pages/ProductsPage"));
+const ProductFormPage = lazy(() => import("./pages/ProductFormPage"));
+const CategoriesPage = lazy(() => import("./pages/CategoriesPage"));
+const BrandsPage = lazy(() => import("./pages/BrandsPage"));
+const CustomersPage = lazy(() => import("./pages/CustomersPage"));
+const CustomerFormPage = lazy(() => import("./pages/CustomerFormPage"));
+const CustomerProfilePage = lazy(() => import("./pages/CustomerProfilePage"));
+const InventoryPage = lazy(() => import("./pages/InventoryPage"));
+const InventoryMovementsPage = lazy(() => import("./pages/InventoryMovementsPage"));
+const SuppliersPage = lazy(() => import("./pages/SuppliersPage"));
+const SupplierProfilePage = lazy(() => import("./pages/SupplierProfilePage"));
+const PurchasesPage = lazy(() => import("./pages/PurchasesPage"));
+const PurchaseFormPage = lazy(() => import("./pages/PurchaseFormPage"));
+const PurchaseDetailsPage = lazy(() => import("./pages/PurchaseDetailsPage"));
+const PosPage = lazy(() => import("./pages/PosPage"));
+const OrdersPage = lazy(() => import("./pages/OrdersPage"));
+const OrderDetailsPage = lazy(() => import("./pages/OrderDetailsPage"));
+const DebtsPage = lazy(() => import("./pages/DebtsPage"));
+const PaymentsPage = lazy(() => import("./pages/PaymentsPage"));
+const ExpensesPage = lazy(() => import("./pages/ExpensesPage"));
+const ExpenseFormPage = lazy(() => import("./pages/ExpenseFormPage"));
+const FinancePage = lazy(() => import("./pages/FinancePage"));
+const ReportsPage = lazy(() => import("./pages/ReportsPage"));
+const UsersPage = lazy(() => import("./pages/UsersPage"));
+
+function HomeRedirect() {
+  const { has } = usePermissions();
+  return <Navigate to={homePathFor(has)} replace />;
+}
+
+/** UI-only route guard (backend authorization remains authoritative). */
+function Guard({ permission, children }: { permission: string; children: ReactNode }) {
+  const { has } = usePermissions();
+  if (!has(permission)) return <Navigate to={homePathFor(has)} replace />;
+  return <>{children}</>;
+}
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
+        <I18nProvider>
+          <ToastProvider>
+            <Suspense fallback={<LoadingSkeleton rows={6} />}>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
 
-          <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <DashboardPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/products"
-            element={
-              <ProtectedRoute>
-                <ProductsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/products/new"
-            element={
-              <ProtectedRoute>
-                <ProductFormPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/products/:id/edit"
-            element={
-              <ProtectedRoute>
-                <ProductFormPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/categories"
-            element={
-              <ProtectedRoute>
-                <CategoriesPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/brands"
-            element={
-              <ProtectedRoute>
-                <BrandsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/customers"
-            element={
-              <ProtectedRoute>
-                <CustomersPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/customers/new"
-            element={
-              <ProtectedRoute>
-                <CustomerFormPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/customers/:id/edit"
-            element={
-              <ProtectedRoute>
-                <CustomerFormPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/customers/:id"
-            element={
-              <ProtectedRoute>
-                <CustomerProfilePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/inventory"
-            element={
-              <ProtectedRoute>
-                <InventoryPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/inventory/movements"
-            element={
-              <ProtectedRoute>
-                <InventoryMovementsPage />
-              </ProtectedRoute>
-            }
-          />
-                    <Route
-            path="/suppliers"
-            element={
-              <ProtectedRoute>
-                <SuppliersPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/suppliers/:id"
-            element={
-              <ProtectedRoute>
-                <SupplierProfilePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/purchases"
-            element={
-              <ProtectedRoute>
-                <PurchasesPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/purchases/new"
-            element={
-              <ProtectedRoute>
-                <PurchaseFormPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/purchases/:id"
-            element={
-              <ProtectedRoute>
-                <PurchaseDetailsPage />
-              </ProtectedRoute>
-            }
-          />
-                    <Route
-            path="/pos"
-            element={
-              <ProtectedRoute>
-                <PosPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/orders"
-            element={
-              <ProtectedRoute>
-                <OrdersPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/orders/:id"
-            element={
-              <ProtectedRoute>
-                <OrderDetailsPage />
-              </ProtectedRoute>
-            }
-          />
+                <Route
+                  element={
+                    <ProtectedRoute>
+                      <AppShell />
+                    </ProtectedRoute>
+                  }
+                >
+                  <Route path="/dashboard" element={<Guard permission="Finance.Profit.View"><DashboardPage /></Guard>} />
+                  <Route path="/products" element={<Guard permission="Products.View"><ProductsPage /></Guard>} />
+                  <Route path="/products/new" element={<Guard permission="Products.View"><ProductFormPage /></Guard>} />
+                  <Route path="/products/:id/edit" element={<Guard permission="Products.View"><ProductFormPage /></Guard>} />
+                  <Route path="/categories" element={<Guard permission="Products.View"><CategoriesPage /></Guard>} />
+                  <Route path="/brands" element={<Guard permission="Products.View"><BrandsPage /></Guard>} />
+                  <Route path="/customers" element={<Guard permission="Sales.View"><CustomersPage /></Guard>} />
+                  <Route path="/customers/new" element={<Guard permission="Sales.View"><CustomerFormPage /></Guard>} />
+                  <Route path="/customers/:id/edit" element={<Guard permission="Sales.View"><CustomerFormPage /></Guard>} />
+                  <Route path="/customers/:id" element={<Guard permission="Sales.View"><CustomerProfilePage /></Guard>} />
+                  <Route path="/inventory" element={<Guard permission="Inventory.View"><InventoryPage /></Guard>} />
+                  <Route path="/inventory/movements" element={<Guard permission="Inventory.View"><InventoryMovementsPage /></Guard>} />
+                  <Route path="/suppliers" element={<Guard permission="Inventory.View"><SuppliersPage /></Guard>} />
+                  <Route path="/suppliers/:id" element={<Guard permission="Inventory.View"><SupplierProfilePage /></Guard>} />
+                  <Route path="/purchases" element={<Guard permission="Inventory.View"><PurchasesPage /></Guard>} />
+                  <Route path="/purchases/new" element={<Guard permission="Inventory.View"><PurchaseFormPage /></Guard>} />
+                  <Route path="/purchases/:id" element={<Guard permission="Inventory.View"><PurchaseDetailsPage /></Guard>} />
+                  <Route path="/pos" element={<Guard permission="Sales.Create"><PosPage /></Guard>} />
+                  <Route path="/orders" element={<Guard permission="Sales.View"><OrdersPage /></Guard>} />
+                  <Route path="/orders/:id" element={<Guard permission="Sales.View"><OrderDetailsPage /></Guard>} />
+                  <Route path="/debts" element={<Guard permission="Sales.View"><DebtsPage /></Guard>} />
+                  <Route path="/payments" element={<Guard permission="Sales.View"><PaymentsPage /></Guard>} />
+                  <Route path="/expenses" element={<Guard permission="Expenses.View"><ExpensesPage /></Guard>} />
+                  <Route path="/expenses/new" element={<Guard permission="Expenses.View"><ExpenseFormPage /></Guard>} />
+                  <Route path="/expenses/:id/edit" element={<Guard permission="Expenses.View"><ExpenseFormPage /></Guard>} />
+                  <Route path="/finance" element={<Guard permission="Finance.Profit.View"><FinancePage /></Guard>} />
+                  <Route path="/reports" element={<Guard permission="Reports.View"><ReportsPage /></Guard>} />
+                  <Route path="/users" element={<Guard permission="Users.Manage"><UsersPage /></Guard>} />
+                  <Route path="/" element={<HomeRedirect />} />
+                </Route>
 
-
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
+          </ToastProvider>
+        </I18nProvider>
       </AuthProvider>
     </BrowserRouter>
   );

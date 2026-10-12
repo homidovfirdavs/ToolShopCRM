@@ -59,13 +59,27 @@ export async function getSupplierPurchases(id: number, page = 1) {
   return res.data;
 }
 
+/** Optional fields: empty string -> null (backend [EmailAddress] rejects ""). */
+function cleanSupplier(values: SupplierFormValues) {
+  const n = (v: string) => (v.trim() === "" ? null : v.trim());
+  return {
+    ...values,
+    name: values.name.trim(),
+    contactPerson: n(values.contactPerson),
+    phone: n(values.phone),
+    email: n(values.email),
+    address: n(values.address),
+    notes: n(values.notes),
+  };
+}
+
 export async function createSupplier(values: SupplierFormValues) {
-  const res = await apiClient.post("/suppliers", values);
+  const res = await apiClient.post("/suppliers", cleanSupplier(values));
   return res.data;
 }
 
 export async function updateSupplier(id: number, values: SupplierFormValues) {
-  const res = await apiClient.put(`/suppliers/${id}`, values);
+  const res = await apiClient.put(`/suppliers/${id}`, cleanSupplier(values));
   return res.data;
 }
 

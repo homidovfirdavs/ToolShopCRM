@@ -74,6 +74,18 @@ public class OrderResponse
     public DateTime CreatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
+
+    // Filled only when Status == Returned.
+    public DateTime? ReturnedAt { get; set; }
+    public string? ReturnedByUsername { get; set; }
+    public string? ReturnReason { get; set; }
+    public decimal? RefundedAmount { get; set; }
+}
+
+public class ReturnOrderRequest
+{
+    [Required, StringLength(500, MinimumLength = 3)]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public class OrderListItemResponse

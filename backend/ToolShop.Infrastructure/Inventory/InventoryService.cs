@@ -151,11 +151,13 @@ public class InventoryService
             catch (DbUpdateException) when (attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
+                _db.ChangeTracker.Clear(); // drop half-applied entities so a retry cannot duplicate them
             }
             catch (Npgsql.PostgresException ex) when (ex.SqlState == "40001" && attempt < maxRetries)
             {
                 // serialization_failure — another concurrent transaction won the race; retry.
                 await SafeRollbackAsync(transaction);
+                _db.ChangeTracker.Clear(); // drop half-applied entities so a retry cannot duplicate them
             }
             finally
             {

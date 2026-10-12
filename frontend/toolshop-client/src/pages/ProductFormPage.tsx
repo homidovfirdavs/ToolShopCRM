@@ -1,107 +1,114 @@
-
-import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { Link } from "react-router-dom";
+import { useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   getCategories,
   getBrands,
   getProduct,
   createProduct,
   updateProduct,
-  type Category,
   type Brand,
+  type Category,
+  type Product,
 } from "../api/catalog";
 import { getSingleStock, type StockItem } from "../api/inventory";
-
-const emptyForm = {
-  name: "",
-  sku: "",
-  barcode: "",
-  categoryId: "",
-  brandId: "",
-  purchasePrice: "",
-  salePrice: "",
-  minimumStockLevel: "0",
-  warrantyMonths: "0",
-  description: "",
-  imageUrl: "",
-  isActive: true,
-};
+import { useI18n } from "../i18n/useI18n";
+import { useAsyncData } from "../lib/useAsyncData";
+import { errorMessage, errorStatus } from "../lib/apiError";
+import { formatNumber } from "../lib/format";
+import PageHeader from "../components/ui/PageHeader";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import FormField from "../components/ui/FormField";
+import StatusBadge from "../components/ui/StatusBadge";
+import { ErrorState, LoadingSkeleton } from "../components/ui/States";
+import { useToast } from "../components/ui/useToast";
+import { inputClass } from "../components/ui/formStyles";
 
 export default function ProductFormPage() {
   const { id } = useParams();
-  const isEdit = Boolean(id);
+  const { t } = useI18n();
+
+  const { data, loading, error, reload } = useAsyncData(async () => {
+    const [categories, brands, product, stock] = await Promise.all([
+      getCategories(),
+      getBrands(),
+      id ? getProduct(Number(id)) : Promise.resolve(null),
+      id ? getSingleStock(Number(id)).catch(() => null) : Promise.resolve(null),
+    ]);
+    return { categories, brands, product, stock };
+  }, id ?? "new");
+
+  if (loading) return <LoadingSkeleton rows={8} />;
+  if (error || !data) return <ErrorState message={t("pf.notFound")} onRetry={reload} />;
+
+  return (
+    <ProductForm
+      key={id ?? "new"}
+      categories={data.categories}
+      brands={data.brands}
+      product={data.product}
+      stock={data.stock}
+    />
+  );
+}
+
+function ProductForm({
+  categories,
+  brands,
+  product,
+  stock,
+}: {
+  categories: Category[];
+  brands: Brand[];
+  product: Product | null;
+  stock: StockItem | null;
+}) {
+  const { t } = useI18n();
+  const toast = useToast();
   const navigate = useNavigate();
+  const isEdit = product !== null;
 
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState({
+    name: product?.name ?? "",
+    sku: product?.sku ?? "",
+    barcode: product?.barcode ?? "",
+    categoryId: product ? String(product.categoryId) : "",
+    brandId: product ? String(product.brandId) : "",
+    purchasePrice: product ? String(product.purchasePrice) : "",
+    salePrice: product ? String(product.salePrice) : "",
+    minimumStockLevel: product ? String(product.minimumStockLevel) : "0",
+    warrantyMonths: product ? String(product.warrantyMonths) : "0",
+    description: product?.description ?? "",
+    imageUrl: product?.imageUrl ?? "",
+    isActive: product?.isActive ?? true,
+  });
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isLoading, setIsLoading] = useState(isEdit);
-  const [isSaving, setIsSaving] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
-    const [stock, setStock] = useState<StockItem | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    getCategories().then(setCategories).catch(() => {});
-    getBrands().then(setBrands).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!isEdit || !id) return;
-
-    getProduct(Number(id))
-      .then((p) => {
-        setForm({
-          name: p.name,
-          sku: p.sku,
-          barcode: p.barcode ?? "",
-          categoryId: String(p.categoryId),
-          brandId: String(p.brandId),
-          purchasePrice: String(p.purchasePrice),
-          salePrice: String(p.salePrice),
-          minimumStockLevel: String(p.minimumStockLevel),
-          warrantyMonths: String(p.warrantyMonths),
-          description: p.description ?? "",
-          imageUrl: p.imageUrl ?? "",
-          isActive: p.isActive,
-        });
-      })
-      .catch(() => setGeneralError("Failed to load product."))
-      .finally(() => setIsLoading(false));
-  }, [id, isEdit]);
-  useEffect(() => {
-    if (!isEdit || !id) return;
-    getSingleStock(Number(id))
-      .then(setStock)
-      .catch(() => {});
-  }, [id, isEdit]);
-
+  function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
 
   function validate(): boolean {
-    const newErrors: Record<string, string> = {};
-
-    if (!form.name.trim()) newErrors.name = "Product name is required.";
-    if (!form.sku.trim()) newErrors.sku = "SKU is required.";
-    if (!form.categoryId) newErrors.categoryId = "Category is required.";
-    if (!form.brandId) newErrors.brandId = "Brand is required.";
-    if (form.purchasePrice === "" || Number(form.purchasePrice) < 0)
-      newErrors.purchasePrice = "Purchase price must be 0 or more.";
-    if (form.salePrice === "" || Number(form.salePrice) < 0)
-      newErrors.salePrice = "Sale price must be 0 or more.";
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    const e: Record<string, string> = {};
+    if (!form.name.trim()) e.name = t("pf.errName");
+    if (!form.sku.trim()) e.sku = t("pf.errSku");
+    if (!form.categoryId) e.categoryId = t("pf.errCategory");
+    if (!form.brandId) e.brandId = t("pf.errBrand");
+    if (form.purchasePrice === "" || Number(form.purchasePrice) < 0) e.purchasePrice = t("pf.errPurchase");
+    if (form.salePrice === "" || Number(form.salePrice) < 0) e.salePrice = t("pf.errSale");
+    setErrors(e);
+    return Object.keys(e).length === 0;
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (saving) return;
     setGeneralError(null);
-
     if (!validate()) return;
 
-    setIsSaving(true);
-
+    setSaving(true);
     const payload = {
       name: form.name.trim(),
       sku: form.sku.trim(),
@@ -118,288 +125,171 @@ export default function ProductFormPage() {
     };
 
     try {
-      if (isEdit && id) {
-        await updateProduct(Number(id), payload);
-      } else {
-        await createProduct(payload);
-      }
+      if (product) await updateProduct(product.id, payload);
+      else await createProduct(payload);
+      toast.success(t("pf.saved"));
       navigate("/products");
     } catch (err) {
-      const status =
-        typeof err === "object" && err !== null && "response" in err
-          ? (err as { response?: { status?: number; data?: { message?: string } } })
-              .response
-          : undefined;
-
-      if (status?.status === 409) {
-        setGeneralError(status.data?.message ?? "A product with these details already exists.");
-      } else if (status?.status === 400) {
-        setGeneralError(status.data?.message ?? "Please check the form for errors.");
-      } else {
-        setGeneralError("Something went wrong. Please try again.");
-      }
+      const status = errorStatus(err);
+      if (status === 409) setGeneralError(errorMessage(err) ?? t("pf.exists"));
+      else if (status === 400) setGeneralError(errorMessage(err) ?? t("pf.checkForm"));
+      else setGeneralError(t("common.somethingWrong"));
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-500">Loading...</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
-        <h1 className="text-xl font-bold text-gray-800 mb-6">
-          {isEdit ? "Edit Product" : "New Product"}
-        </h1>
+    <div className="mx-auto max-w-3xl">
+      <PageHeader
+        title={isEdit ? t("pf.edit") : t("pf.new")}
+        subtitle={product?.sku}
+        actions={
+          <Link to="/products">
+            <Button variant="secondary">{t("common.back")}</Button>
+          </Link>
+        }
+      />
 
-        {generalError && (
-          <p className="text-red-600 text-sm mb-4" role="alert">
-            {generalError}
-          </p>
-        )}
-
+      <Card>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Product Name *
-            </label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-            />
-            {errors.name && (
-              <p className="text-red-600 text-xs mt-1">{errors.name}</p>
-            )}
+          {generalError && (
+            <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">
+              {generalError}
+            </p>
+          )}
+
+          <FormField label={t("pf.name")} required error={errors.name}>
+            <input className={inputClass} value={form.name} onChange={(e) => set("name", e.target.value)} autoFocus />
+          </FormField>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="SKU" required error={errors.sku}>
+              <input className={inputClass} value={form.sku} onChange={(e) => set("sku", e.target.value)} />
+            </FormField>
+            <FormField label={t("pf.barcode")}>
+              <input className={inputClass} value={form.barcode} onChange={(e) => set("barcode", e.target.value)} />
+            </FormField>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                SKU *
-              </label>
-              <input
-                type="text"
-                value={form.sku}
-                onChange={(e) => setForm({ ...form, sku: e.target.value })}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              />
-              {errors.sku && (
-                <p className="text-red-600 text-xs mt-1">{errors.sku}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Barcode
-              </label>
-              <input
-                type="text"
-                value={form.barcode}
-                onChange={(e) => setForm({ ...form, barcode: e.target.value })}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Category *
-              </label>
-              <select
-                value={form.categoryId}
-                onChange={(e) =>
-                  setForm({ ...form, categoryId: e.target.value })
-                }
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              >
-                <option value="">Select category</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label={t("prod.category")} required error={errors.categoryId}>
+              <select className={inputClass} value={form.categoryId} onChange={(e) => set("categoryId", e.target.value)}>
+                <option value="">{t("pf.selectCategory")}</option>
+                {categories
+                  .filter((c) => c.isActive || String(c.id) === form.categoryId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
               </select>
-              {errors.categoryId && (
-                <p className="text-red-600 text-xs mt-1">{errors.categoryId}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Brand *
-              </label>
-              <select
-                value={form.brandId}
-                onChange={(e) => setForm({ ...form, brandId: e.target.value })}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              >
-                <option value="">Select brand</option>
-                {brands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
+            </FormField>
+            <FormField label={t("prod.brand")} required error={errors.brandId}>
+              <select className={inputClass} value={form.brandId} onChange={(e) => set("brandId", e.target.value)}>
+                <option value="">{t("pf.selectBrand")}</option>
+                {brands
+                  .filter((b) => b.isActive || String(b.id) === form.brandId)
+                  .map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
               </select>
-              {errors.brandId && (
-                <p className="text-red-600 text-xs mt-1">{errors.brandId}</p>
-              )}
-            </div>
+            </FormField>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Purchase Price *
-              </label>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label={t("prod.purchase")} required error={errors.purchasePrice}>
               <input
                 type="number"
+                min="0"
                 step="0.01"
+                className={inputClass}
                 value={form.purchasePrice}
-                onChange={(e) =>
-                  setForm({ ...form, purchasePrice: e.target.value })
-                }
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                onChange={(e) => set("purchasePrice", e.target.value)}
               />
-              {errors.purchasePrice && (
-                <p className="text-red-600 text-xs mt-1">
-                  {errors.purchasePrice}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Sale Price *
-              </label>
+            </FormField>
+            <FormField label={t("prod.sale")} required error={errors.salePrice}>
               <input
                 type="number"
+                min="0"
                 step="0.01"
+                className={inputClass}
                 value={form.salePrice}
-                onChange={(e) =>
-                  setForm({ ...form, salePrice: e.target.value })
-                }
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                onChange={(e) => set("salePrice", e.target.value)}
               />
-              {errors.salePrice && (
-                <p className="text-red-600 text-xs mt-1">{errors.salePrice}</p>
-              )}
-            </div>
+            </FormField>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Minimum Stock Level
-              </label>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label={t("pf.minStock")}>
               <input
                 type="number"
+                min="0"
+                className={inputClass}
                 value={form.minimumStockLevel}
-                onChange={(e) =>
-                  setForm({ ...form, minimumStockLevel: e.target.value })
-                }
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                onChange={(e) => set("minimumStockLevel", e.target.value)}
               />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Warranty (Months)
-              </label>
+            </FormField>
+            <FormField label={t("pf.warranty")}>
               <input
                 type="number"
+                min="0"
+                className={inputClass}
                 value={form.warrantyMonths}
-                onChange={(e) =>
-                  setForm({ ...form, warrantyMonths: e.target.value })
-                }
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                onChange={(e) => set("warrantyMonths", e.target.value)}
               />
-            </div>
+            </FormField>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Description
-            </label>
+          <FormField label={t("pf.description")}>
             <textarea
-              value={form.description}
-              onChange={(e) =>
-                setForm({ ...form, description: e.target.value })
-              }
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
+              className={inputClass}
               rows={3}
+              value={form.description}
+              onChange={(e) => set("description", e.target.value)}
             />
-          </div>
+          </FormField>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Image URL
-            </label>
-            <input
-              type="text"
-              value={form.imageUrl}
-              onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
-              className="w-full border border-gray-300 rounded-md px-3 py-2"
-            />
-          </div>
+          <FormField label={t("pf.imageUrl")}>
+            <input className={inputClass} value={form.imageUrl} onChange={(e) => set("imageUrl", e.target.value)} />
+          </FormField>
 
-                    {isEdit && (
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={form.isActive}
-                onChange={(e) =>
-                  setForm({ ...form, isActive: e.target.checked })
-                }
-              />
-              Active
+          {isEdit && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={form.isActive} onChange={(e) => set("isActive", e.target.checked)} />
+              {t("common.active")}
             </label>
           )}
 
           {isEdit && stock && (
-            <div className="border-t border-gray-100 pt-4 mt-2">
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">
-                Inventory
-              </h2>
-              <p className="text-sm text-gray-600">
-                Current Stock: <strong>{stock.currentStock}</strong> | Minimum:{" "}
-                {stock.minimumStockLevel} | Status: {stock.status}
+            <div className="rounded-lg bg-slate-50 p-3 text-sm">
+              <p className="mb-1 font-semibold text-slate-800">{t("pf.inventory")}</p>
+              <p className="flex flex-wrap items-center gap-2 text-slate-600">
+                {t("pf.currentStock")}: <strong>{formatNumber(stock.currentStock)}</strong> · {t("inv.minimum")}:{" "}
+                {formatNumber(stock.minimumStockLevel)} ·{" "}
+                <StatusBadge
+                  label={t(`inv.status.${stock.status}`)}
+                  tone={stock.status === "InStock" ? "green" : stock.status === "LowStock" ? "yellow" : "red"}
+                />
               </p>
-              <Link
-                to="/inventory/movements"
-                className="text-blue-600 hover:underline text-sm"
-              >
-                View Movements
+              <Link to="/inventory/movements" className="mt-1 inline-block text-blue-600 hover:underline">
+                {t("pf.viewMovements")}
               </Link>
             </div>
           )}
 
           <div className="flex gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 transition"
-            >
-              {isSaving ? "Saving..." : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/products")}
-              className="border border-gray-300 px-4 py-2 rounded-md hover:bg-gray-50 transition"
-            >
-              Cancel
-            </button>
+            <Button type="submit" loading={saving}>
+              {t("common.save")}
+            </Button>
+            <Button variant="secondary" onClick={() => navigate("/products")} disabled={saving}>
+              {t("common.cancel")}
+            </Button>
           </div>
         </form>
-      </div>
+      </Card>
     </div>
   );
 }

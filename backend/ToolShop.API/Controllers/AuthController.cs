@@ -5,6 +5,7 @@ using ToolShop.Domain.Entities;
 using ToolShop.Infrastructure.Auth;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ToolShop.API.Controllers;
 
@@ -12,7 +13,7 @@ namespace ToolShop.API.Controllers;
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
-        private readonly UserManager<ApplicationUser> _userManager;
+    private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly TokenService _tokenService;
     private readonly RefreshTokenService _refreshTokenService;
@@ -32,6 +33,7 @@ public class AuthController : ControllerBase
         _auditService = auditService;
     }
 
+    [EnableRateLimiting("auth")]
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
@@ -48,7 +50,7 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid username/email or password." });
         }
 
-                var signInResult = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
+        var signInResult = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
 
         if (signInResult.IsLockedOut)
         {
@@ -79,16 +81,16 @@ public class AuthController : ControllerBase
             }
         };
 
-    await _auditService.LogAsync(
+        await _auditService.LogAsync(
             user.Id,
             "Login",
             description: $"User '{user.UserName}' logged in.",
             ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString());
 
-
         return Ok(response);
     }
 
+    [EnableRateLimiting("auth")]
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh([FromBody] RefreshRequest request)
     {
@@ -128,6 +130,7 @@ public class AuthController : ControllerBase
             }
         });
     }
+
     [Authorize]
     [HttpGet("me")]
     public async Task<IActionResult> Me()
@@ -154,10 +157,9 @@ public class AuthController : ControllerBase
             Email = user.Email ?? string.Empty,
             Roles = [.. roles]
         });
-    
     }
 
-       [HttpPost("logout")]
+    [HttpPost("logout")]
     public async Task<IActionResult> Logout([FromBody] RefreshRequest request)
     {
         if (!string.IsNullOrWhiteSpace(request.RefreshToken))
@@ -168,5 +170,5 @@ public class AuthController : ControllerBase
         return NoContent();
     }
 
-
+    
 }
