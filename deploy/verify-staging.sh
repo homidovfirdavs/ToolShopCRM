@@ -19,6 +19,15 @@ chk "docker compose config" docker compose $P config --quiet
 echo "building (first time takes several minutes) ..."
 chk "images build (api, web, migrate)" docker compose $P build
 chk "stack starts (db -> migrate -> api -> web)" docker compose $P up -d --wait --wait-timeout 240
+echo; echo "---- versions and base image digests actually used (copy these to pin; not secrets) ----"
+docker compose $P exec -T db postgres --version 2>/dev/null | sed 's/^/db:  /'
+docker compose $P exec -T web nginx -v 2>&1 | sed 's/^/web: /'
+docker compose $P exec -T api dotnet --list-runtimes 2>/dev/null | sed 's/^/api: /'
+for i in postgres:17-alpine nginxinc/nginx-unprivileged:1.27-alpine mcr.microsoft.com/dotnet/sdk:10.0 mcr.microsoft.com/dotnet/aspnet:10.0 node:22-alpine; do
+  d=$(docker image inspect --format '{{index .RepoDigests 0}}' "$i" 2>/dev/null) || d=""
+  echo "digest $i => ${d:-not present locally}"
+done
+echo "----"
 chk "migrate job exited 0" sh -c "docker compose $P ps -a --format '{{.Service}} {{.ExitCode}}' | grep -q '^migrate 0'"
 for s in db api web; do chk "$s healthy" sh -c "docker compose $P ps $s --format '{{.Health}}' | grep -q healthy"; done
 chk "HTTP -> HTTPS redirect (301)" sh -c "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ | grep -q 301"
