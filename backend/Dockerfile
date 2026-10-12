@@ -4,7 +4,9 @@
 #   target "migrate"                 : one-shot DB migration job (idempotent EF script + psql)
 # No secrets live in this file or in the image: everything comes from environment variables at run time.
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# Base images are pinned by digest (verified in CI 2026-10-12: PostgreSQL 17.11, .NET 10.0.12). To update: run the
+# "Docker staging check" workflow, copy the printed digests here, re-run it.
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS build
 WORKDIR /src
 COPY ToolShop.Domain/ToolShop.Domain.csproj ToolShop.Domain/
 COPY ToolShop.Infrastructure/ToolShop.Infrastructure.csproj ToolShop.Infrastructure/
@@ -28,11 +30,11 @@ RUN dotnet ef migrations script --idempotent \
       --output /out/migrate.sql
 
 # ---- one-shot migration job: runs /db/migrate.sh (mounted by docker-compose) ----
-FROM postgres:17-alpine AS migrate
+FROM postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24 AS migrate
 COPY --from=migrations /out/migrate.sql /opt/migrate.sql
 
 # ---- runtime ----
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:222759b391a1aaf241166672c8f99b2d4ada452e7b5319f3c6e8f265a37b5ad4 AS runtime
 # curl is only used by the container HEALTHCHECK
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \

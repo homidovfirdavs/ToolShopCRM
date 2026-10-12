@@ -115,7 +115,7 @@ PWA (Service Worker) танҳо дар build-и истеҳсолӣ фаъол а
 - [ ] 2. Рамзҳои воқеӣ танҳо дар `deploy/.env`-и сервер (`sh ./init-env.sh`); ҳеҷ рамз дар Git нест. ADMIN_PASSWORD-ро баъди login иваз кунед.
 - [ ] 3. Санҷиши backup/restore бо маълумоти воқеӣ (`test-backup-restore.sh`) ва нусхаи backup дар ҷойи дигар (на ҳамон сервер).
 - [ ] 4. Санҷиш бо Docker дар муҳити ниҳоӣ (сервери production/VPS), на танҳо дар GitHub.
-- [ ] 5. Версияҳои образҳо бо tag@digest pin шудаанд ва дубора дар CI санҷида шудаанд (ниг. ҳолати pin дар поён).
+- [x] 5. Образҳо бо `тег@sha256` pin шудаанд (PostgreSQL 17.11, Nginx 1.27.5, .NET 10.0.12, Node 22) ва дар CI бо pin санҷида шудаанд; навсозӣ: натиҷаи `digest …`-и workflow-ро нусха кунед ва CI-ро дубора иҷро кунед.
 - [ ] 6. CSP дар саҳифаҳои дохилӣ (POS, графикҳои Dashboard, Reports) дар Nginx-и воқеӣ бо корбар санҷида шавад (console бе хатои CSP).
 - [ ] 7. Санҷиши телефон (Android/iPhone, PWA) бо HTTPS-и воқеӣ: `docs/PWA-PHONE-TEST.tj.md`.
 
