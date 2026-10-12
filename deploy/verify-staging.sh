@@ -24,8 +24,8 @@ docker compose $P exec -T db postgres --version 2>/dev/null | sed 's/^/db:  /'
 docker compose $P exec -T web nginx -v 2>&1 | sed 's/^/web: /'
 docker compose $P exec -T api dotnet --list-runtimes 2>/dev/null | sed 's/^/api: /'
 for i in postgres:17-alpine nginxinc/nginx-unprivileged:1.27-alpine mcr.microsoft.com/dotnet/sdk:10.0 mcr.microsoft.com/dotnet/aspnet:10.0 node:22-alpine; do
-  d=$(docker image inspect --format '{{index .RepoDigests 0}}' "$i" 2>/dev/null) || d=""
-  echo "digest $i => ${d:-not present locally}"
+  d=$(docker buildx imagetools inspect "$i" 2>/dev/null | sed -n 's/^Digest: *//p' | head -n 1)
+  echo "digest $i => ${d:-unavailable}"
 done
 echo "----"
 chk "migrate job exited 0" sh -c "docker compose $P ps -a --format '{{.Service}} {{.ExitCode}}' | grep -q '^migrate 0'"

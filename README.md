@@ -2,7 +2,7 @@
 
 CRM барои мағозаи асбобҳо ва таҷҳизоти сохтмонӣ: касса (POS), фармоишҳо, муштариён, пардохтҳо ва қарзҳо, анбор, харидҳо, хароҷот, молия ва ҳисоботҳо.
 
-> Ҳолат: барои кори маҳаллӣ (development) омода аст. Frontend ҳоло PWA аст (Windows, macOS, Android, iOS), ниг. `docs/PWA.tj.md`. **Файлҳои Docker/Nginx омода ва қисман санҷида шудаанд (ниг. `docs/DEPLOYMENT.tj.md`); production-деплой анҷом дода нашудааст.**
+> Ҳолат: барои кори маҳаллӣ (development) омода аст. Frontend ҳоло PWA аст (Windows, macOS, Android, iOS), ниг. `docs/PWA.tj.md`. **Docker/Nginx барои staging санҷида шудааст (ниг. `docs/DEPLOYMENT.tj.md`); production-деплой анҷом дода нашудааст.**
 
 | Ҳуҷҷат | Барои кӣ |
 |---|---|
@@ -104,10 +104,20 @@ PWA (Service Worker) танҳо дар build-и истеҳсолӣ фаъол а
 
 Пеш аз `Run-E2E.ps1` backend ва frontend-и оддиро хомӯш кунед (портҳои 5252 ва 5173 бояд озод бошанд). Скрипт худаш серверҳоро бо базаи `_test` бардошта, пас аз тест мебандад.
 
-## Деплой бо Docker (омодасозӣ, на production)
+## Деплой бо Docker (staging тайёр, production интизор)
 
-`deploy/` — Docker Compose: Nginx (HTTPS) + API + PostgreSQL, health check, `restart: unless-stopped`, volume-ҳои доимӣ, backup/restore.
-Рамзҳо танҳо дар `deploy/.env` (дар `.gitignore`). Тафсилот: [`docs/DEPLOYMENT.tj.md`](docs/DEPLOYMENT.tj.md). Санҷиш дар мошини Docker: `sh deploy/verify-staging.sh`.
+`deploy/` — Docker Compose: Nginx (HTTPS) + API + PostgreSQL, health check, `restart: unless-stopped`, volume-ҳои доимӣ, backup/restore. Рамзҳо танҳо дар `deploy/.env` (дар `.gitignore`). Тафсилот: [`docs/DEPLOYMENT.tj.md`](docs/DEPLOYMENT.tj.md).
+
+**Ҳолат:** `COMPLETED FOR STAGING — PRODUCTION PENDING`. Санҷиши staging дар Docker-и воқеӣ (GitHub Actions, workflow «Docker staging check», `deploy/verify-staging.sh`): **18 аз 18 PASS** (иҷрои #3, 2026-10-12; PostgreSQL 17.11, Nginx 1.27.5, .NET 10.0.12). Дар компютери маҳаллӣ (Windows кӯҳна) Docker кор намекунад.
+
+### Чеклисти production (то иҷро нашавад, production тасдиқ намешавад)
+- [ ] 1. Сертификати воқеӣ (Let's Encrypt/CA) ва домен; `HSTS_MAX_AGE` -ро баъди санҷиш ба 31536000 гузоред (дар staging self-signed ва HSTS=0 буд).
+- [ ] 2. Рамзҳои воқеӣ танҳо дар `deploy/.env`-и сервер (`sh ./init-env.sh`); ҳеҷ рамз дар Git нест. ADMIN_PASSWORD-ро баъди login иваз кунед.
+- [ ] 3. Санҷиши backup/restore бо маълумоти воқеӣ (`test-backup-restore.sh`) ва нусхаи backup дар ҷойи дигар (на ҳамон сервер).
+- [ ] 4. Санҷиш бо Docker дар муҳити ниҳоӣ (сервери production/VPS), на танҳо дар GitHub.
+- [ ] 5. Версияҳои образҳо бо tag@digest pin шудаанд ва дубора дар CI санҷида шудаанд (ниг. ҳолати pin дар поён).
+- [ ] 6. CSP дар саҳифаҳои дохилӣ (POS, графикҳои Dashboard, Reports) дар Nginx-и воқеӣ бо корбар санҷида шавад (console бе хатои CSP).
+- [ ] 7. Санҷиши телефон (Android/iPhone, PWA) бо HTTPS-и воқеӣ: `docs/PWA-PHONE-TEST.tj.md`.
 
 ## Қоидаҳои асосии тиҷоратӣ
 
@@ -134,5 +144,5 @@ PWA (Service Worker) танҳо дар build-и истеҳсолӣ фаъол а
 - Баргардонидани қисмии фармоиш нест (танҳо пурра).
 - Экрани дидани аудит нест (сабтҳо дар ҷадвали `AuditLogs` ҳастанд).
 - Backup/restore дар базаи маҳаллӣ санҷида шудааст (PASS); дар муҳити staging/production бояд дубора санҷида шавад.
-- Build/run-и контейнерҳо дар муҳити cloud санҷида нашуд (registry-ҳо баста); `sh deploy/verify-staging.sh`-ро дар мошини Docker иҷро кунед. Production-деплой анҷом дода нашудааст.
+- Docker: staging дар CI санҷида шудааст (18/18); production-деплой анҷом дода нашудааст, чеклисти боло интизор аст.
 - PWA: санҷиш дар Windows/macOS/Android/iOS-и воқеӣ анҷом дода нашудааст, танҳо эмулятсия дар Chromium; насб ва Service Worker HTTPS талаб мекунанд. Тафсилот: [PWA](docs/PWA.tj.md).
