@@ -41,3 +41,4 @@ deploy/.env.*
 !deploy/.env.example
 deploy/certs/*
 !deploy/certs/.gitkeep
+backups/
