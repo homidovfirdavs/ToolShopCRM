@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { getProducts, getCategories, getBrands, deactivateProduct, type ProductListItem } from "../api/catalog";
 import { usePermissions } from "../auth/usePermissions";
 import { useI18n } from "../i18n/useI18n";
+import { useCategoryNames } from "../lib/categoryNames";
 import { useAsyncData } from "../lib/useAsyncData";
 import { formatMoney } from "../lib/format";
 import PageHeader from "../components/ui/PageHeader";
@@ -28,6 +29,7 @@ const INITIAL: Filters = { search: "", categoryId: "", brandId: "", status: "", 
 
 export default function ProductsPage() {
   const { t } = useI18n();
+  const catNames = useCategoryNames();
   const { has } = usePermissions();
   const toast = useToast();
   const canManage = has("Products.Update");
@@ -108,7 +110,7 @@ export default function ProductsPage() {
             <option value="">{t("prod.allCategories")}</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name}
+                {catNames.of(c)}
               </option>
             ))}
           </select>
@@ -156,7 +158,7 @@ export default function ProductsPage() {
                       {p.barcode && <p className="text-xs text-slate-500">{p.barcode}</p>}
                     </td>
                     <td className={tdClass}>{p.sku}</td>
-                    <td className={tdClass}>{p.categoryName}</td>
+                    <td className={tdClass}>{catNames.label(p.categoryName)}</td>
                     <td className={tdClass}>{p.brandName}</td>
                     {canManage && <td className={`${tdClass} text-right`}>{formatMoney(p.purchasePrice)}</td>}
                     <td className={`${tdClass} text-right font-medium`}>{formatMoney(p.salePrice)}</td>
@@ -194,7 +196,7 @@ export default function ProductsPage() {
                   <div className="min-w-0">
                     <p className="font-medium text-slate-900">{p.name}</p>
                     <p className="text-xs text-slate-500">
-                      {p.sku} · {p.categoryName} · {p.brandName}
+                      {p.sku} · {catNames.label(p.categoryName)} · {p.brandName}
                     </p>
                     {p.barcode && <p className="text-xs text-slate-400">{p.barcode}</p>}
                   </div>

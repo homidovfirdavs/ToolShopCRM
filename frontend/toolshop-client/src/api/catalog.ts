@@ -6,11 +6,22 @@ export interface Category {
   productCount?: number;
   /** All products in this category including inactive ones. */
   totalProductCount?: number;
+  /** Main name (unique, required). Also the fallback when a translation is empty. */
   name: string;
+  /** Optional translations (display only). */
+  nameTj?: string | null;
+  nameRu?: string | null;
+  nameEn?: string | null;
   description: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string | null;
+}
+
+export interface CategoryTranslations {
+  nameTj: string;
+  nameRu: string;
+  nameEn: string;
 }
 
 export interface Brand {
@@ -95,8 +106,8 @@ export async function getCategories(): Promise<Category[]> {
   return res.data;
 }
 
-export async function createCategory(name: string, description: string) {
-  const res = await apiClient.post("/categories", { name, description });
+export async function createCategory(name: string, description: string, tr?: CategoryTranslations) {
+  const res = await apiClient.post("/categories", { name, description, ...tr });
   return res.data;
 }
 
@@ -104,12 +115,14 @@ export async function updateCategory(
   id: number,
   name: string,
   description: string,
-  isActive: boolean
+  isActive: boolean,
+  tr?: CategoryTranslations
 ) {
   const res = await apiClient.put(`/categories/${id}`, {
     name,
     description,
     isActive,
+    ...tr,
   });
   return res.data;
 }
@@ -174,4 +187,4 @@ export async function updateProduct(id: number, values: ProductFormValues) {
 
 export async function deactivateProduct(id: number) {
   await apiClient.delete(`/products/${id}`);
-}
+}

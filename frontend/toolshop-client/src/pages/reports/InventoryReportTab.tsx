@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { getBrands, getCategories } from "../../api/catalog";
+import { getBrands, getCategories, type Category } from "../../api/catalog";
 import { getInventoryReport, exportInventoryReport, type InventoryReportRow } from "../../api/reports";
 import { ExportButton, Pager, FilterBar } from "./shared";
 import { useI18n } from "../../i18n/useI18n";
+import { useCategoryNames } from "../../lib/categoryNames";
 import { formatMoney, statusLabel, styles } from "./reportUtils";
 
 interface Filters {
@@ -31,11 +32,12 @@ function statusStyle(status: string) {
 
 export default function InventoryReportTab() {
   const { t } = useI18n();
+  const catNames = useCategoryNames();
   const [draft, setDraft] = useState<Filters>(EMPTY_FILTERS);
   const [applied, setApplied] = useState<Filters>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
 
-  const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<{ id: number; name: string }[]>([]);
 
   const [rows, setRows] = useState<InventoryReportRow[]>([]);
@@ -101,7 +103,7 @@ export default function InventoryReportTab() {
               <option value="">{t("rep.all")}</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name}
+                  {catNames.of(c)}
                 </option>
               ))}
             </select>
@@ -178,7 +180,7 @@ export default function InventoryReportTab() {
                     <tr key={r.productId}>
                       <td style={styles.td}>{r.productName}</td>
                       <td style={styles.td}>{r.sku}</td>
-                      <td style={styles.td}>{r.categoryName}</td>
+                      <td style={styles.td}>{catNames.label(r.categoryName)}</td>
                       <td style={styles.td}>{r.brandName}</td>
                       <td style={styles.tdRight}>{r.currentStock}</td>
                       <td style={styles.tdRight}>{r.minimumStockLevel}</td>

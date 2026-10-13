@@ -106,7 +106,7 @@ PWA (Service Worker) танҳо дар build-и истеҳсолӣ фаъол а
 
 ## Деплой бо Docker (staging тайёр, production интизор)
 
-`deploy/` — Docker Compose: Nginx (HTTPS) + API + PostgreSQL, health check, `restart: unless-stopped`, volume-ҳои доимӣ, backup/restore. Рамзҳо танҳо дар `deploy/.env` (дар `.gitignore`). Тафсилот: [`docs/DEPLOYMENT.tj.md`](docs/DEPLOYMENT.tj.md).
+`deploy/` — Docker Compose: Nginx (HTTPS) + API + PostgreSQL, health check, `restart: unless-stopped`, volume-ҳои доимӣ, backup/restore. Рамзҳо танҳо дар `deploy/.env` (дар `.gitignore`). Тафсилот: [`docs/DEPLOYMENT.tj.md`](docs/DEPLOYMENT.tj.md). Дастури қадам ба қадам барои сервери Ubuntu: [`docs/PRODUCTION-READINESS.tj.md`](docs/PRODUCTION-READINESS.tj.md).
 
 **Ҳолат:** `COMPLETED FOR STAGING — PRODUCTION PENDING`. Санҷиши staging дар Docker-и воқеӣ (GitHub Actions, workflow «Docker staging check», `deploy/verify-staging.sh`): **18 аз 18 PASS** (иҷрои #3, 2026-10-12; PostgreSQL 17.11, Nginx 1.27.5, .NET 10.0.12). Дар компютери маҳаллӣ (Windows кӯҳна) Docker кор намекунад.
 

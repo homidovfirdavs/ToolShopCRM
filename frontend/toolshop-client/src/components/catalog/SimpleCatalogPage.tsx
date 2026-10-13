@@ -2,6 +2,8 @@ import { useState, type FormEvent } from "react";
 import { usePermissions } from "../../auth/usePermissions";
 import { useI18n } from "../../i18n/useI18n";
 import { useAsyncData } from "../../lib/useAsyncData";
+import { localizedCategoryName } from "../../lib/categoryNames";
+import type { CategoryTranslations } from "../../api/catalog";
 import { errorStatus } from "../../lib/apiError";
 import PageHeader from "../ui/PageHeader";
 import Card from "../ui/Card";
@@ -17,6 +19,10 @@ import { inputClass, tdClass, thClass } from "../ui/formStyles";
 export interface CatalogItem {
   id: number;
   name: string;
+  /** Categories only: optional translations (display only; empty = main name is shown). */
+  nameTj?: string | null;
+  nameRu?: string | null;
+  nameEn?: string | null;
   description: string | null;
   isActive: boolean;
   /** Present for categories only (real count from the API). */
@@ -29,8 +35,10 @@ interface Props {
   prefix: "cat" | "brand";
   titleKey: string;
   load: () => Promise<CatalogItem[]>;
-  create: (name: string, description: string) => Promise<unknown>;
-  update: (id: number, name: string, description: string, isActive: boolean) => Promise<unknown>;
+  /** Categories only: show the Tajik / Russian / English name inputs. */
+  translatable?: boolean;
+  create: (name: string, description: string, tr?: CategoryTranslations) => Promise<unknown>;
+  update: (id: number, name: string, description: string, isActive: boolean, tr?: CategoryTranslations) => Promise<unknown>;
   deactivate: (id: number) => Promise<unknown>;
 }
 
@@ -38,8 +46,9 @@ interface Props {
 const CELL_PAD = "!px-1.5 sm:!px-4";
 const TH_SMALL = "!text-[11px] !tracking-normal sm:!text-[13px] sm:!tracking-wide";
 
-export default function SimpleCatalogPage({ prefix, titleKey, load, create, update, deactivate }: Props) {
-  const { t } = useI18n();
+export default function SimpleCatalogPage({ prefix, titleKey, load, create, update, deactivate, translatable = false }: Props) {
+  const { t, lang } = useI18n();
+  const shownName = (i: CatalogItem) => (translatable ? localizedCategoryName(i, lang) : i.name);
   const { has } = usePermissions();
   const toast = useToast();
   const canManage = has("Products.Update");
@@ -50,6 +59,9 @@ export default function SimpleCatalogPage({ prefix, titleKey, load, create, upda
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<CatalogItem | null>(null);
   const [name, setName] = useState("");
+  const [nameTj, setNameTj] = useState("");
+  const [nameRu, setNameRu] = useState("");
+  const [nameEn, setNameEn] = useState("");
   const [description, setDescription] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
@@ -61,6 +73,9 @@ export default function SimpleCatalogPage({ prefix, titleKey, load, create, upda
   function openCreate() {
     setEditing(null);
     setName("");
+    setNameTj("");
+    setNameRu("");
+    setNameEn("");
     setDescription("");
     setIsActive(true);
     setFormError(null);
@@ -70,6 +85,9 @@ export default function SimpleCatalogPage({ prefix, titleKey, load, create, upda
   function openEdit(item: CatalogItem) {
     setEditing(item);
     setName(item.name);
+    setNameTj(item.nameTj ?? "");
+    setNameRu(item.nameRu ?? "");
+    setNameEn(item.nameEn ?? "");
     setDescription(item.description ?? "");
     setIsActive(item.isActive);
     setFormError(null);
@@ -86,10 +104,11 @@ export default function SimpleCatalogPage({ prefix, titleKey, load, create, upda
     setSaving(true);
     setFormError(null);
     try {
+      const tr = translatable ? { nameTj: nameTj.trim(), nameRu: nameRu.trim(), nameEn: nameEn.trim() } : undefined;
       if (editing) {
-        await update(editing.id, name.trim(), description.trim(), isActive);
+        await update(editing.id, name.trim(), description.trim(), isActive, tr);
       } else {
-        await create(name.trim(), description.trim());
+        await create(name.trim(), description.trim(), tr);
       }
       toast.success(t("common.saved"));
       setModalOpen(false);
@@ -103,7 +122,9 @@ export default function SimpleCatalogPage({ prefix, titleKey, load, create, upda
 
   async function handleActivate(item: CatalogItem) {
     try {
-      await update(item.id, item.name, item.description ?? "", true);
+      // keep the translations: activating must never wipe them
+      const tr = translatable ? { nameTj: item.nameTj ?? "", nameRu: item.nameRu ?? "", nameEn: item.nameEn ?? "" } : undefined;
+      await update(item.id, item.name, item.description ?? "", true, tr);
       toast.success(t("common.activated"));
       reload();
     } catch {
@@ -153,7 +174,10 @@ export default function SimpleCatalogPage({ prefix, titleKey, load, create, upda
                 {data.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50">
                     <td className={`${tdClass} ${CELL_PAD} font-medium text-slate-900`}>
-                      {item.name}
+                      {shownName(item)}
+                      {translatable && shownName(item) !== item.name && (
+                        <div className="text-xs font-normal text-slate-400" title={t("cat.mainName")}>{item.name}</div>
+                      )}
                       <div className="mt-1 sm:hidden">
                         <StatusBadge
                           label={item.isActive ? t("common.active") : t("common.inactive")}
@@ -216,9 +240,24 @@ export default function SimpleCatalogPage({ prefix, titleKey, load, create, upda
         }
       >
         <form id="catalog-form" onSubmit={handleSubmit} className="space-y-4">
-          <FormField label={t("common.name")} required>
+          <FormField label={translatable ? t("cat.mainName") : t("common.name")} required>
             <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
           </FormField>
+          {translatable && (
+            <fieldset className="space-y-3 rounded-lg border border-slate-200 p-3">
+              <legend className="px-1 text-sm font-medium text-slate-700">{t("cat.translations")}</legend>
+              <FormField label={t("cat.nameTj")}>
+                <input className={inputClass} value={nameTj} onChange={(e) => setNameTj(e.target.value)} maxLength={150} />
+              </FormField>
+              <FormField label={t("cat.nameRu")}>
+                <input className={inputClass} value={nameRu} onChange={(e) => setNameRu(e.target.value)} maxLength={150} />
+              </FormField>
+              <FormField label={t("cat.nameEn")}>
+                <input className={inputClass} value={nameEn} onChange={(e) => setNameEn(e.target.value)} maxLength={150} />
+              </FormField>
+              <p className="text-xs text-slate-500">{t("cat.translationsHint")}</p>
+            </fieldset>
+          )}
           <FormField label={`${t("common.description")} (${t("common.optional")})`}>
             <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
           </FormField>

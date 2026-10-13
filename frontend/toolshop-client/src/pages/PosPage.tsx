@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { getCategories, getProducts, type ProductListItem } from "../api/catalog";
 import { getCustomers, createCustomer, type CustomerListItem } from "../api/customers";
@@ -19,6 +19,8 @@ import { EmptyState, ErrorState, LoadingSkeleton } from "../components/ui/States
 import { useToast } from "../components/ui/useToast";
 import { useOnline } from "../pwa/useOnline";
 import { inputClass } from "../components/ui/formStyles";
+import CategoryPanel from "../components/pos/CategoryPanel";
+import { useCategoryNames } from "../lib/categoryNames";
 
 interface CartLine {
   productId: number;
@@ -78,6 +80,7 @@ export default function PosPage() {
   const { t } = useI18n();
   const toast = useToast();
   const online = useOnline();
+  const catNames = useCategoryNames();
 
   // ---------- product browsing ----------
   const [searchText, setSearchText] = useState("");
@@ -424,6 +427,7 @@ export default function PosPage() {
   }
 
   const pdata = products.data;
+  const selectedCategory = (categories.data ?? []).find((c) => c.id === categoryId) ?? null;
   const walkIn = !customerId;
 
   return (
@@ -445,25 +449,38 @@ export default function PosPage() {
             <div onKeyDown={onSearchKey}>
               <SearchInput value={searchText} onChange={setSearchText} placeholder={t("pos.searchProducts")} />
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Chip active={categoryId === null} onClick={() => setCategoryId(null)}>
-                {t("pos.allCategories")}
-              </Chip>
-              {(categories.data ?? [])
-                .filter((c) => c.isActive)
-                .map((c) => (
-                  <Chip key={c.id} active={categoryId === c.id} onClick={() => setCategoryId(c.id)}>
-                    {c.name}
-                  </Chip>
-                ))}
-            </div>
           </Card>
+
+          <CategoryPanel
+            categories={categories.data}
+            loading={categories.loading}
+            error={categories.error}
+            onRetry={categories.reload}
+            selectedId={categoryId}
+            onSelect={setCategoryId}
+          />
+
+          <div id="pos-products" className="scroll-mt-20" />
+          {selectedCategory && (
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 truncate rounded-full bg-blue-50 px-3 py-1.5 text-sm font-semibold text-blue-700">{catNames.of(selectedCategory)}</span>
+              <button
+                type="button"
+                onClick={() => setCategoryId(null)}
+                aria-label={t("pos.catClear")}
+                title={t("pos.catClear")}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {products.loading && <LoadingSkeleton rows={4} />}
           {products.error && <ErrorState message={t("common.loadFailed")} onRetry={products.reload} />}
           {!products.loading && !products.error && pdata && pdata.items.length === 0 && (
             <Card>
-              <EmptyState message={t("pos.noProducts")} />
+              <EmptyState message={categoryId !== null && !query ? t("pos.categoryEmpty") : t("pos.noProducts")} />
             </Card>
           )}
           {!products.loading && !products.error && pdata && pdata.items.length > 0 && (
@@ -808,20 +825,6 @@ function Row({ label, value, bold, danger }: { label: string; value: string; bol
       <span className={bold || danger ? "" : "text-slate-600"}>{label}</span>
       <span>{value}</span>
     </div>
-  );
-}
-
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`min-h-10 rounded-full px-4 py-1.5 text-sm font-medium transition ${
-        active ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 

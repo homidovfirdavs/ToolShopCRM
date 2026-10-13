@@ -12,6 +12,7 @@ import {
 } from "../api/catalog";
 import { getSingleStock, type StockItem } from "../api/inventory";
 import { useI18n } from "../i18n/useI18n";
+import { useCategoryNames } from "../lib/categoryNames";
 import { useAsyncData } from "../lib/useAsyncData";
 import { errorMessage, errorStatus } from "../lib/apiError";
 import { formatNumber } from "../lib/format";
@@ -64,6 +65,7 @@ function ProductForm({
   stock: StockItem | null;
 }) {
   const { t } = useI18n();
+  const catNames = useCategoryNames();
   const toast = useToast();
   const navigate = useNavigate();
   const isEdit = product !== null;
@@ -180,7 +182,7 @@ function ProductForm({
                   .filter((c) => c.isActive || String(c.id) === form.categoryId)
                   .map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name}
+                      {catNames.of(c)}
                     </option>
                   ))}
               </select>

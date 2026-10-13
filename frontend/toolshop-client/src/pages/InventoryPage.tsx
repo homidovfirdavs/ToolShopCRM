@@ -4,6 +4,7 @@ import { getStock, stockIn, stockOut, createAdjustment, type StockItem, type Sto
 import { getCategories, getBrands } from "../api/catalog";
 import { usePermissions } from "../auth/usePermissions";
 import { useI18n } from "../i18n/useI18n";
+import { useCategoryNames } from "../lib/categoryNames";
 import { useAsyncData } from "../lib/useAsyncData";
 import { errorMessage, errorStatus } from "../lib/apiError";
 import { formatNumber } from "../lib/format";
@@ -37,6 +38,7 @@ interface Filters {
 
 export default function InventoryPage() {
   const { t } = useI18n();
+  const catNames = useCategoryNames();
   const { has } = usePermissions();
   const toast = useToast();
   const [params] = useSearchParams();
@@ -167,7 +169,7 @@ export default function InventoryPage() {
             <option value="">{t("prod.allCategories")}</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name}
+                {catNames.of(c)}
               </option>
             ))}
           </select>
@@ -213,7 +215,7 @@ export default function InventoryPage() {
                   <tr key={it.productId} className="hover:bg-slate-50">
                     <td className={`${tdClass} font-medium text-slate-900`}>{it.productName}</td>
                     <td className={tdClass}>{it.sku}</td>
-                    <td className={tdClass}>{it.categoryName}</td>
+                    <td className={tdClass}>{catNames.label(it.categoryName)}</td>
                     <td className={tdClass}>{it.brandName}</td>
                     <td className={`${tdClass} text-right font-semibold`}>{formatNumber(it.currentStock)}</td>
                     <td className={`${tdClass} text-right`}>{formatNumber(it.minimumStockLevel)}</td>
@@ -247,7 +249,7 @@ export default function InventoryPage() {
                   <div className="min-w-0">
                     <p className="font-medium text-slate-900">{it.productName}</p>
                     <p className="text-xs text-slate-500">
-                      {it.sku} · {it.categoryName} · {it.brandName}
+                      {it.sku} · {catNames.label(it.categoryName)} · {it.brandName}
                     </p>
                   </div>
                   <StatusBadge label={t(`inv.status.${it.status}`)} tone={STATUS_TONE[it.status]} />

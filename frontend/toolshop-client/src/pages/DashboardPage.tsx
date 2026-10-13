@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Area, AreaChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  BarChart3, Calculator, ChevronRight, CircleAlert, ClipboardList, PackageX, PieChart as PieIcon,
-  TriangleAlert, Users, Wallet,
+  BarChart3, Calculator, ChevronRight, CircleAlert, ClipboardList, PackageX,
+  TrendingUp, TriangleAlert, Users, Wallet,
 } from "lucide-react";
 import {
   getDashboardSummary, getSalesTrend, getSalesByCategory, getAttention,
@@ -15,6 +15,7 @@ import { getPresetRange, toDateStr, type DateRange, type PresetKey } from "../li
 import { useAsyncData } from "../lib/useAsyncData";
 import { formatDate, formatMoney, formatNumber } from "../lib/format";
 import { useI18n } from "../i18n/useI18n";
+import { useCategoryNames } from "../lib/categoryNames";
 import PageHeader from "../components/ui/PageHeader";
 import Card from "../components/ui/Card";
 import KpiCard, { type KpiDelta } from "../components/ui/KpiCard";
@@ -67,8 +68,16 @@ export default function DashboardPage() {
   const [range, setRange] = useState<DateRange>(getPresetRange("last30"));
 
   const { data, error, loading, reload } = useAsyncData(() => loadAll(range), `${range.from}|${range.to}`);
+  const catNames = useCategoryNames();
+  // Only the label text is translated; grouping, amounts and order come from the API unchanged.
+  const byCategory = useMemo(
+    () => (data?.byCategory ?? []).map((c) => ({ ...c, category: catNames.label(c.category) })),
+    [data, catNames],
+  );
 
   const money = (v: number | null) => formatMoney(v);
+  // Backend value as is: Revenue − COGS − Operating Expenses, or null (N/A) when cost data is incomplete.
+  const netProfit: number | null = data?.fin.netOperatingProfit ?? null;
   const periodLabel = `${formatDate(range.from)} → ${formatDate(range.to)}`;
 
   const delta = (cur: number | null, prev: number | null | undefined, upIsGood: boolean): KpiDelta => ({
@@ -101,53 +110,60 @@ export default function DashboardPage() {
             </p>
           )}
 
-          <div className="mb-5 grid grid-cols-1 gap-3 min-[640px]:grid-cols-2 min-[1024px]:grid-cols-3 min-[1500px]:grid-cols-6">
-            <KpiCard
-              accent="green"
-              icon={<BarChart3 size={22} />}
-              label={t("kpi.revenue")}
-              value={money(data.summary.salesRevenue)}
-              delta={delta(data.summary.salesRevenue, data.prevSummary?.salesRevenue, true)}
-            />
-            <KpiCard
-              accent="blue"
-              icon={<PieIcon size={22} />}
-              label={t("kpi.gross")}
-              value={money(data.summary.grossProfit)}
-              tone={data.summary.grossProfit === null ? "warning" : "default"}
-              delta={delta(data.summary.grossProfit, data.prevSummary?.grossProfit, true)}
-              hint={data.summary.grossProfit === null ? t("dash.warnGross") : undefined}
-            />
-            <KpiCard
-              accent="amber"
-              icon={<Calculator size={22} />}
-              label={t("kpi.opex")}
-              value={money(data.summary.operatingExpenses)}
-              delta={delta(data.summary.operatingExpenses, data.prevSummary?.operatingExpenses, false)}
-            />
-            <KpiCard
-              accent="red"
-              icon={<Users size={22} />}
-              label={t("kpi.debt")}
-              value={money(data.summary.accountsReceivable)}
-              to="/debts"
-            />
-            <KpiCard
-              accent="teal"
-              icon={<Wallet size={22} />}
-              label={t("kpi.payments")}
-              value={money(data.summary.paymentsReceived)}
-              to="/payments"
-              delta={delta(data.summary.paymentsReceived, data.prevSummary?.paymentsReceived, true)}
-            />
-            <KpiCard
-              accent="violet"
-              icon={<PackageX size={22} />}
-              label={t("kpi.lowStock")}
-              value={formatNumber(data.summary.lowStockCount)}
-              tone={data.summary.lowStockCount > 0 ? "negative" : "default"}
-              to="/inventory?status=LowStock"
-            />
+          {/* 5 KPIs, all from the API. Net Profit = Revenue − COGS (CostAtSale) − Operating Expenses, computed by the backend;
+              it is null (shown as N/A, never 0) when the cost of any sold item is unknown. */}
+          <div
+            data-testid="dash-kpis"
+            className="mb-5 grid grid-cols-1 gap-3 min-[640px]:grid-cols-2 min-[1024px]:grid-cols-6 min-[1500px]:grid-cols-5"
+          >
+            <div className="min-w-0 [&>*]:h-full min-[1024px]:col-span-2 min-[1500px]:col-span-1">
+              <KpiCard
+                accent="green"
+                icon={<BarChart3 size={22} />}
+                label={t("kpi.revenue")}
+                value={money(data.summary.salesRevenue)}
+                delta={delta(data.summary.salesRevenue, data.prevSummary?.salesRevenue, true)}
+              />
+            </div>
+            <div className="min-w-0 [&>*]:h-full min-[1024px]:col-span-2 min-[1500px]:col-span-1">
+              <KpiCard
+                accent="teal"
+                icon={<Wallet size={22} />}
+                label={t("kpi.payments")}
+                value={money(data.summary.paymentsReceived)}
+                to="/payments"
+                delta={delta(data.summary.paymentsReceived, data.prevSummary?.paymentsReceived, true)}
+              />
+            </div>
+            <div className="min-w-0 [&>*]:h-full min-[1024px]:col-span-2 min-[1500px]:col-span-1">
+              <KpiCard
+                accent="red"
+                icon={<Users size={22} />}
+                label={t("kpi.debt")}
+                value={money(data.summary.accountsReceivable)}
+                hint={t("dash.debtAsOf")}
+                to="/debts"
+              />
+            </div>
+            <div className="min-w-0 [&>*]:h-full min-[1024px]:col-span-3 min-[1500px]:col-span-1">
+              <KpiCard
+                accent="amber"
+                icon={<Calculator size={22} />}
+                label={t("kpi.opex")}
+                value={money(data.summary.operatingExpenses)}
+                delta={delta(data.summary.operatingExpenses, data.prevSummary?.operatingExpenses, false)}
+              />
+            </div>
+            <div className="min-w-0 [&>*]:h-full min-[640px]:col-span-2 min-[1024px]:col-span-3 min-[1500px]:col-span-1">
+              <KpiCard
+                accent="blue"
+                icon={<TrendingUp size={22} />}
+                label={t("kpi.netProfit")}
+                value={money(netProfit)}
+                tone={netProfit === null ? "warning" : netProfit < 0 ? "negative" : netProfit > 0 ? "positive" : "default"}
+                hint={netProfit === null ? t("dash.warnNet") : undefined}
+              />
+            </div>
           </div>
 
           <div className="mb-5 grid grid-cols-1 gap-4 min-[1200px]:grid-cols-5">
@@ -223,7 +239,7 @@ export default function DashboardPage() {
             </Card>
 
             <Card title={t("dash.byCategory")} fill className="min-[1200px]:col-span-2 !rounded-2xl">
-              {data.byCategory.length === 0 ? (
+              {byCategory.length === 0 ? (
                 <EmptyState message={t("dash.noData")} />
               ) : (
                 <div className="flex flex-col items-center gap-4 min-[600px]:flex-row min-[1200px]:flex-col min-[1500px]:flex-row">
@@ -231,16 +247,16 @@ export default function DashboardPage() {
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
-                          data={data.byCategory}
+                          data={byCategory}
                           dataKey="revenue"
                           nameKey="category"
                           innerRadius="62%"
                           outerRadius="100%"
-                          paddingAngle={data.byCategory.length > 1 ? 2 : 0}
+                          paddingAngle={byCategory.length > 1 ? 2 : 0}
                           stroke="none"
                           isAnimationActive={false}
                         >
-                          {data.byCategory.map((c, i) => (
+                          {byCategory.map((c, i) => (
                             <Cell key={c.category} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
                           ))}
                         </Pie>
@@ -249,13 +265,13 @@ export default function DashboardPage() {
                     </ResponsiveContainer>
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
                       <span className="text-lg font-bold leading-tight text-slate-900">
-                        {formatMoney(data.byCategory.reduce((s, c) => s + c.revenue, 0))}
+                        {formatMoney(byCategory.reduce((s, c) => s + c.revenue, 0))}
                       </span>
                       <span className="text-[13px] text-slate-600">{t("dash.total")}</span>
                     </div>
                   </div>
                   <ul className="w-full min-w-0 flex-1 space-y-2.5">
-                    {data.byCategory.map((c, i) => (
+                    {byCategory.map((c, i) => (
                       <li key={c.category} className="flex items-center gap-2 text-[15px]">
                         <span
                           className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -272,7 +288,7 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          <div className="mb-5 grid grid-cols-1 items-start gap-4 min-[1200px]:grid-cols-5">
+          <div className="mb-5 grid grid-cols-1 gap-4 min-[1200px]:grid-cols-5">
             <Card title={<span className="flex items-center gap-2"><CircleAlert size={18} className="text-red-500" />{t("dash.attention")}</span>} className="min-[1200px]:col-span-2 !rounded-2xl">
               <div className="divide-y divide-slate-100">
                 {data.attention.map((a) => {
@@ -301,7 +317,7 @@ export default function DashboardPage() {
 
             <Card
               title={t("dash.lowStockTitle")}
-              className="min-[1200px]:col-span-3 min-[1200px]:row-span-2 !rounded-2xl"
+              className="min-[1200px]:col-span-3 !rounded-2xl"
               actions={<Link to="/inventory?status=LowStock" className="text-sm font-medium text-blue-600 hover:underline">{t("dash.viewAll")}</Link>}
             >
               {data.lowStock.length === 0 ? (
@@ -318,7 +334,7 @@ export default function DashboardPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {data.lowStock.map((p) => (
+                      {data.lowStock.slice(0, 6).map((p) => (
                         <tr key={p.productId}>
                           <td className="py-2.5 pr-2">
                             <span className="block font-medium text-slate-800">{p.productName}</span>
@@ -341,31 +357,9 @@ export default function DashboardPage() {
                 </div>
               )}
             </Card>
-
-            <Card title={t("dash.summary")} className="min-[1200px]:col-span-2 !rounded-2xl">
-              <div className="grid grid-cols-2 gap-4 text-sm min-[900px]:grid-cols-5 min-[1200px]:grid-cols-2">
-                <SummaryItem label={t("dash.revenue")} value={money(data.fin.revenue)} />
-                <SummaryItem label={t("dash.cogs")} value={money(data.fin.cogs)} />
-                <SummaryItem label={t("kpi.gross")} value={money(data.fin.grossProfit)} />
-                <SummaryItem label={t("dash.expenses")} value={money(data.fin.operatingExpenses)} />
-                <SummaryItem className="min-[1200px]:col-span-2" label={t("dash.netProfit")} value={money(data.fin.netOperatingProfit)} />
-              </div>
-              <Link to="/reports" className="mt-4 inline-block text-[15px] text-blue-600 hover:underline">
-                {t("dash.details")}
-              </Link>
-            </Card>
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-function SummaryItem({ label, value, className = "" }: { label: string; value: string; className?: string }) {
-  return (
-    <div className={className}>
-      <p className="text-sm text-slate-600">{label}</p>
-      <p className="text-xl font-bold text-slate-900">{value}</p>
     </div>
   );
 }

@@ -49,6 +49,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         builder.Entity<Category>(entity =>
         {
             entity.Property(c => c.Name).HasMaxLength(150).IsRequired();
+            entity.Property(c => c.NameTj).HasMaxLength(150);
+            entity.Property(c => c.NameRu).HasMaxLength(150);
+            entity.Property(c => c.NameEn).HasMaxLength(150);
             entity.HasIndex(c => c.Name).IsUnique();
         });
 

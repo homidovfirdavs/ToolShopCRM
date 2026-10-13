@@ -26,11 +26,21 @@ public class CategoriesController : ControllerBase
     {
         Id = c.Id,
         Name = c.Name,
+        NameTj = c.NameTj,
+        NameRu = c.NameRu,
+        NameEn = c.NameEn,
         Description = c.Description,
         IsActive = c.IsActive,
         CreatedAt = c.CreatedAt,
         UpdatedAt = c.UpdatedAt
     };
+
+    /// <summary>Optional translation: trimmed, empty becomes null (display falls back to Name).</summary>
+    private static string? CleanTranslation(string? value)
+    {
+        var v = value?.Trim();
+        return string.IsNullOrEmpty(v) ? null : v;
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetAll()
@@ -52,6 +62,9 @@ public class CategoriesController : ControllerBase
         {
             c.Id,
             c.Name,
+            c.NameTj,
+            c.NameRu,
+            c.NameEn,
             c.Description,
             c.IsActive,
             c.CreatedAt,
@@ -95,6 +108,9 @@ public class CategoriesController : ControllerBase
         var category = new Category
         {
             Name = name,
+            NameTj = CleanTranslation(request.NameTj),
+            NameRu = CleanTranslation(request.NameRu),
+            NameEn = CleanTranslation(request.NameEn),
             Description = request.Description,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
@@ -134,6 +150,9 @@ public class CategoriesController : ControllerBase
         }
 
         category.Name = name;
+        category.NameTj = CleanTranslation(request.NameTj);
+        category.NameRu = CleanTranslation(request.NameRu);
+        category.NameEn = CleanTranslation(request.NameEn);
         category.Description = request.Description;
         category.IsActive = request.IsActive;
         category.UpdatedAt = DateTime.UtcNow;

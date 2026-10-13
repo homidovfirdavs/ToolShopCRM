@@ -3,9 +3,11 @@ import { getCategoryPerformance, type CategoryPerformanceRow } from "../../api/r
 import { DateRangeFields } from "./shared";
 import { defaultRange, formatMoney, formatPercent, styles } from "./reportUtils";
 import { useI18n } from "../../i18n/useI18n";
+import { useCategoryNames } from "../../lib/categoryNames";
 
 export default function CategoryPerformanceReportTab() {
   const { t } = useI18n();
+  const catNames = useCategoryNames();
   const range = defaultRange();
   const [draft, setDraft] = useState(range);
   const [applied, setApplied] = useState(range);
@@ -95,7 +97,7 @@ export default function CategoryPerformanceReportTab() {
                 )}
                 {rows.map((r) => (
                   <tr key={r.category}>
-                    <td style={styles.td}>{r.category}</td>
+                    <td style={styles.td}>{catNames.label(r.category)}</td>
                     <td style={styles.tdRight}>{r.quantitySold}</td>
                     <td style={styles.tdRight}>{formatMoney(r.revenue)}</td>
                     <td style={styles.tdRight}>{formatMoney(r.cogs)}</td>
