@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using ToolShop.Domain.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.API.DTOs.Catalog;
@@ -52,6 +53,7 @@ public class SuppliersController : ControllerBase
         User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
 
     [HttpGet]
+    [Authorize(Policy = Permissions.InventoryView)]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
         [FromQuery] bool? isActive,
@@ -100,6 +102,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.InventoryView)]
     public async Task<IActionResult> GetById(int id)
     {
         var supplier = await _db.Suppliers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
@@ -109,6 +112,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpGet("{id:int}/purchases")]
+    [Authorize(Policy = Permissions.InventoryView)]
     public async Task<IActionResult> GetPurchases(int id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         var supplierExists = await _db.Suppliers.AnyAsync(s => s.Id == id);

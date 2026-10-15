@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using ToolShop.Domain.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -273,6 +274,7 @@ public class InventoryController : ControllerBase
     // ---------- Movement history ----------
 
     [HttpGet("movements")]
+    [Authorize(Policy = Permissions.InventoryView)]
     public async Task<IActionResult> GetMovements(
         [FromQuery] int? productId,
         [FromQuery] InventoryMovementType? movementType,
@@ -343,6 +345,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("products/{productId:int}/movements")]
+    [Authorize(Policy = Permissions.InventoryView)]
     public async Task<IActionResult> GetProductMovements(int productId)
     {
         var productExists = await _db.Products.AnyAsync(p => p.Id == productId);

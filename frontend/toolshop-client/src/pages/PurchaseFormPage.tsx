@@ -62,7 +62,7 @@ export default function PurchaseFormPage() {
     setSelectedProduct(p);
     setProductSearch(p.name);
     setProductResults([]);
-    setUnitCost(String(p.purchasePrice));
+    setUnitCost(p.purchasePrice != null ? String(p.purchasePrice) : "");
   }
 
   function addItem() {

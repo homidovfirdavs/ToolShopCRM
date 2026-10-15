@@ -87,7 +87,7 @@ public class ProductResponse
     public int BrandId { get; set; }
     public string BrandName { get; set; } = string.Empty;
 
-    public decimal PurchasePrice { get; set; }
+    public decimal? PurchasePrice { get; set; }  // null = hidden for this role (not 0)
     public decimal SalePrice { get; set; }
     public int MinimumStockLevel { get; set; }
     public int WarrantyMonths { get; set; }
@@ -108,7 +108,7 @@ public class ProductListItemResponse
     public string? Barcode { get; set; }
     public string CategoryName { get; set; } = string.Empty;
     public string BrandName { get; set; } = string.Empty;
-    public decimal PurchasePrice { get; set; }
+    public decimal? PurchasePrice { get; set; }  // null = hidden for this role (not 0)
     public decimal SalePrice { get; set; }
     public bool IsActive { get; set; }
 }

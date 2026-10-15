@@ -57,6 +57,9 @@ public class ProductsController : ControllerBase
         IsActive = p.IsActive
     };
 
+    /// <summary>Purchase (cost) price is confidential: only roles that manage stock/prices see it; others get null.</summary>
+    private bool CanSeeCost => User.IsInRole("Admin") || User.IsInRole("Manager") || User.IsInRole("Warehouse");
+
     [HttpGet]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
@@ -120,6 +123,11 @@ public class ProductsController : ControllerBase
             .Select(p => ToListItem(p))
             .ToListAsync();
 
+        if (!CanSeeCost)
+        {
+            foreach (var item in items) item.PurchasePrice = null;
+        }
+
         return Ok(new PagedResult<ProductListItemResponse>
         {
             Items = items,
@@ -144,7 +152,9 @@ public class ProductsController : ControllerBase
             return NotFound(new { message = "Product not found." });
         }
 
-        return Ok(ToResponse(product));
+        var response = ToResponse(product);
+        if (!CanSeeCost) response.PurchasePrice = null;
+        return Ok(response);
     }
 
     [HttpPost]

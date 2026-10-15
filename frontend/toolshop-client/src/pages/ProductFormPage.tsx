@@ -76,7 +76,7 @@ function ProductForm({
     barcode: product?.barcode ?? "",
     categoryId: product ? String(product.categoryId) : "",
     brandId: product ? String(product.brandId) : "",
-    purchasePrice: product ? String(product.purchasePrice) : "",
+    purchasePrice: product?.purchasePrice != null ? String(product.purchasePrice) : "",
     salePrice: product ? String(product.salePrice) : "",
     minimumStockLevel: product ? String(product.minimumStockLevel) : "0",
     warrantyMonths: product ? String(product.warrantyMonths) : "0",

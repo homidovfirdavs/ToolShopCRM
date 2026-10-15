@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using ToolShop.Domain.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.API.DTOs.Catalog;
@@ -76,6 +77,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = Permissions.InventoryView)]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
         [FromQuery] int? supplierId,
@@ -151,6 +153,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.InventoryView)]
     public async Task<IActionResult> GetById(int id)
     {
         var purchase = await _db.Purchases

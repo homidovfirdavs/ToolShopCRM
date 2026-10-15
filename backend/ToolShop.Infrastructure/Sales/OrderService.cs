@@ -215,6 +215,9 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
                 order.Status = OrderStatus.Completed;
                 order.CompletedByUserId = userId;
                 order.CompletedAt = DateTime.UtcNow;
+                // The sale date is the moment of completion (a draft may have been held for days); revenue and COGS are
+                // bucketed by OrderDate while payments use their own date.
+                order.OrderDate = order.CompletedAt.Value;
 
                 foreach (var item in order.Items)
                 {
@@ -253,7 +256,7 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
 
                 return order;
             }
-            catch (Npgsql.PostgresException ex) when (ex.SqlState == "40001" && attempt < maxRetries)
+            catch (Exception ex) when (ToolShop.Infrastructure.Persistence.SerializationFailure.IsRetryable(ex) && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
                 _db.ChangeTracker.Clear(); // drop half-applied entities before retrying
@@ -272,22 +275,26 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
 
     public async Task CancelDraftAsync(int orderId)
     {
-        var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
+        // One atomic conditional UPDATE: a concurrent Complete can never be overwritten by a stale "Cancelled".
+        var cancelledAt = (DateTime?)DateTime.UtcNow;
+        var changed = await _db.Orders
+            .Where(o => o.Id == orderId && o.Status == OrderStatus.Draft)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(o => o.Status, OrderStatus.Cancelled)
+                .SetProperty(o => o.CancelledAt, cancelledAt));
 
-        if (order is null)
+        if (changed == 1)
+        {
+            return;
+        }
+
+        var exists = await _db.Orders.AsNoTracking().AnyAsync(o => o.Id == orderId);
+        if (!exists)
         {
             throw new KeyNotFoundException("Order not found.");
         }
 
-        if (order.Status != OrderStatus.Draft)
-        {
-            throw new OrderNotDraftException("cancelled");
-        }
-
-        order.Status = OrderStatus.Cancelled;
-        order.CancelledAt = DateTime.UtcNow;
-
-        await _db.SaveChangesAsync();
+        throw new OrderNotDraftException("cancelled");
     }
 
     /// <summary>
@@ -364,7 +371,7 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
 
                 return new OrderReturnResult(order, order.Items.Count, refunded);
             }
-            catch (Npgsql.PostgresException ex) when (ex.SqlState == "40001" && attempt < maxRetries)
+            catch (Exception ex) when (ToolShop.Infrastructure.Persistence.SerializationFailure.IsRetryable(ex) && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
                 _db.ChangeTracker.Clear();

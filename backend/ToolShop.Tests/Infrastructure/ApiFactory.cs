@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using ToolShop.Domain.Entities;
 using ToolShop.Infrastructure.Persistence;
@@ -61,6 +62,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        // Test diagnostics: remember unhandled server errors so a 500 in a test can show its real cause.
+        builder.ConfigureLogging(l => l.AddProvider(new ErrorCaptureProvider()));
     }
 
     public async Task InitializeAsync()
@@ -172,4 +175,38 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 [CollectionDefinition("db")]
 public sealed class DbCollection : ICollectionFixture<ApiFactory>
 {
+}
+
+
+/// <summary>Collects Error-level log entries (with exception text) produced while the tests run.</summary>
+public sealed class ErrorCaptureProvider : Microsoft.Extensions.Logging.ILoggerProvider
+{
+    public static readonly System.Collections.Concurrent.ConcurrentQueue<string> Errors = new();
+
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => new Capture(categoryName);
+    public void Dispose() { }
+
+    public static string Dump()
+    {
+        // EF logs every failed command at Error level even when the service then retries successfully, so only the
+        // entries written by the exception-handler middleware describe the request that really ended in a 500.
+        var real = Errors.Where(e => e.Contains("ExceptionHandler") || e.Contains("Diagnostics")).TakeLast(2).ToList();
+        var text = real.Count > 0
+            ? "UNHANDLED (caused the 5xx):\n" + string.Join("\n---\n", real)
+            : "No unhandled-exception entry found. Last errors:\n" + string.Join("\n---\n", Errors.TakeLast(2));
+        return text.Length > 3500 ? text[..3500] : text;
+    }
+
+    private sealed class Capture(string category) : Microsoft.Extensions.Logging.ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => logLevel >= Microsoft.Extensions.Logging.LogLevel.Error;
+
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (!IsEnabled(logLevel)) return;
+            Errors.Enqueue($"[{category}] {formatter(state, exception)} {exception}");
+        }
+    }
 }

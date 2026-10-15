@@ -40,7 +40,7 @@ export interface ProductListItem {
   barcode: string | null;
   categoryName: string;
   brandName: string;
-  purchasePrice: number;
+  purchasePrice: number | null;
   salePrice: number;
   isActive: boolean;
 }
@@ -54,7 +54,7 @@ export interface Product {
   categoryName: string;
   brandId: number;
   brandName: string;
-  purchasePrice: number;
+  purchasePrice: number | null;
   salePrice: number;
   minimumStockLevel: number;
   warrantyMonths: number;
