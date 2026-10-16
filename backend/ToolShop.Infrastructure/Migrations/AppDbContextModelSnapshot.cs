@@ -22,6 +22,8 @@ namespace ToolShop.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("return_number_seq");
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
                 {
                     b.Property<string>("Id")
@@ -997,6 +999,125 @@ namespace ToolShop.Infrastructure.Migrations
                     b.ToTable("OrderItems");
                 });
 
+            modelBuilder.Entity("ToolShop.Domain.Entities.Sales.OrderReturn", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal?>("CostReversed")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("GoodsValue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("OrderId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<decimal>("RefundAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int?>("RefundMethod")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReturnNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("ReturnedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReturnedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<decimal?>("WriteOffCost")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("ReturnNumber")
+                        .IsUnique();
+
+                    b.HasIndex("ReturnedAt");
+
+                    b.ToTable("OrderReturns", t =>
+                        {
+                            t.HasCheckConstraint("CK_OrderReturns_GoodsValue", "\"GoodsValue\" >= 0");
+
+                            t.HasCheckConstraint("CK_OrderReturns_RefundAmount", "\"RefundAmount\" >= 0");
+
+                            t.HasCheckConstraint("CK_OrderReturns_RefundMethod", "\"RefundAmount\" = 0 OR \"RefundMethod\" IS NOT NULL");
+                        });
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Sales.OrderReturnItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal?>("CostAtSaleSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("NetValue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("OrderItemId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("OrderReturnId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ProductId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RestockedQuantity")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("WrittenOffQuantity")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderItemId");
+
+                    b.HasIndex("OrderReturnId");
+
+                    b.HasIndex("ProductId");
+
+                    b.ToTable("OrderReturnItems", t =>
+                        {
+                            t.HasCheckConstraint("CK_OrderReturnItems_NetValue", "\"NetValue\" >= 0");
+
+                            t.HasCheckConstraint("CK_OrderReturnItems_Quantity", "\"Quantity\" > 0");
+
+                            t.HasCheckConstraint("CK_OrderReturnItems_Split", "\"RestockedQuantity\" >= 0 AND \"WrittenOffQuantity\" >= 0 AND \"RestockedQuantity\" + \"WrittenOffQuantity\" = \"Quantity\"");
+                        });
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
@@ -1166,12 +1287,55 @@ namespace ToolShop.Infrastructure.Migrations
                     b.Navigation("Product");
                 });
 
+            modelBuilder.Entity("ToolShop.Domain.Entities.Sales.OrderReturn", b =>
+                {
+                    b.HasOne("ToolShop.Domain.Entities.Sales.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Order");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Sales.OrderReturnItem", b =>
+                {
+                    b.HasOne("ToolShop.Domain.Entities.Sales.OrderItem", "OrderItem")
+                        .WithMany()
+                        .HasForeignKey("OrderItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ToolShop.Domain.Entities.Sales.OrderReturn", "OrderReturn")
+                        .WithMany("Items")
+                        .HasForeignKey("OrderReturnId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ToolShop.Domain.Entities.Catalog.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("OrderItem");
+
+                    b.Navigation("OrderReturn");
+
+                    b.Navigation("Product");
+                });
+
             modelBuilder.Entity("ToolShop.Domain.Entities.Purchases.Purchase", b =>
                 {
                     b.Navigation("Items");
                 });
 
             modelBuilder.Entity("ToolShop.Domain.Entities.Sales.Order", b =>
+                {
+                    b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Sales.OrderReturn", b =>
                 {
                     b.Navigation("Items");
                 });

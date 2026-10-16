@@ -32,6 +32,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<OrderReturn> OrderReturns => Set<OrderReturn>();
+    public DbSet<OrderReturnItem> OrderReturnItems => Set<OrderReturnItem>();
 
     public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
     public DbSet<Expense> Expenses => Set<Expense>();
@@ -264,6 +266,69 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .WithMany()
                 .HasForeignKey(e => e.ExpenseCategoryId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // TASK C1 - returns ledger: immutable history of returns, accounted in the period of the return.
+        // Everything is Restrict (history is never cascaded away); numbers come from return_number_seq.
+        builder.HasSequence<long>("return_number_seq");
+
+        builder.Entity<OrderReturn>(entity =>
+        {
+            entity.Property(r => r.ReturnNumber).HasMaxLength(20).IsRequired();
+            entity.Property(r => r.Reason).HasMaxLength(500).IsRequired();
+            entity.Property(r => r.ReturnedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(r => r.GoodsValue).HasPrecision(18, 2);
+            entity.Property(r => r.CostReversed).HasPrecision(18, 2);
+            entity.Property(r => r.WriteOffCost).HasPrecision(18, 2);
+            entity.Property(r => r.RefundAmount).HasPrecision(18, 2);
+
+            entity.HasIndex(r => r.ReturnNumber).IsUnique();
+            entity.HasIndex(r => r.OrderId);
+            entity.HasIndex(r => r.ReturnedAt);
+
+            entity.HasOne(r => r.Order)
+                .WithMany()
+                .HasForeignKey(r => r.OrderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_OrderReturns_GoodsValue", "\"GoodsValue\" >= 0");
+                t.HasCheckConstraint("CK_OrderReturns_RefundAmount", "\"RefundAmount\" >= 0");
+                t.HasCheckConstraint("CK_OrderReturns_RefundMethod", "\"RefundAmount\" = 0 OR \"RefundMethod\" IS NOT NULL");
+            });
+        });
+
+        builder.Entity<OrderReturnItem>(entity =>
+        {
+            entity.Property(i => i.NetValue).HasPrecision(18, 2);
+            entity.Property(i => i.CostAtSaleSnapshot).HasPrecision(18, 2);
+
+            entity.HasIndex(i => i.OrderReturnId);
+            entity.HasIndex(i => i.OrderItemId);
+            entity.HasIndex(i => i.ProductId);
+
+            entity.HasOne(i => i.OrderReturn)
+                .WithMany(r => r.Items)
+                .HasForeignKey(i => i.OrderReturnId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(i => i.OrderItem)
+                .WithMany()
+                .HasForeignKey(i => i.OrderItemId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(i => i.Product)
+                .WithMany()
+                .HasForeignKey(i => i.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_OrderReturnItems_Quantity", "\"Quantity\" > 0");
+                t.HasCheckConstraint("CK_OrderReturnItems_Split", "\"RestockedQuantity\" >= 0 AND \"WrittenOffQuantity\" >= 0 AND \"RestockedQuantity\" + \"WrittenOffQuantity\" = \"Quantity\"");
+                t.HasCheckConstraint("CK_OrderReturnItems_NetValue", "\"NetValue\" >= 0");
+            });
         });
 
         // Identity table-ҳо (AspNetUsers, AspNetRoles, ...) худкор
