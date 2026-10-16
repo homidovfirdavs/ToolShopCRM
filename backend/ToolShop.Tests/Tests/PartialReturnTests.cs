@@ -12,10 +12,11 @@ namespace ToolShop.Tests.Tests;
 [Collection("db")]
 public class PartialReturnTests(ApiFactory factory) : TestBase(factory)
 {
+    /// <summary>Every call is a NEW return operation with its own Idempotency-Key, unless a key is passed to resend it.</summary>
     private Task<HttpResponseMessage> ReturnAsync(int orderId, object? items = null, string? refundMethod = null,
-        decimal? refundAmount = null, HttpClient? client = null) =>
-        (client ?? Admin).PostAsJsonAsync($"/api/orders/{orderId}/return",
-            new { reason = "Customer returned goods", items, refundMethod, refundAmount });
+        decimal? refundAmount = null, HttpClient? client = null, string? key = null) =>
+        PostWithKeyAsync(client ?? Admin, $"/api/orders/{orderId}/return",
+            new { reason = "Customer returned goods", items, refundMethod, refundAmount }, key ?? NewKey());
 
     private static object Line(int orderItemId, int quantity, int damaged = 0) =>
         new { orderItemId, quantity, damagedQuantity = damaged };

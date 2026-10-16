@@ -99,9 +99,12 @@ describe("OrderDetailsPage - returns", () => {
 
     // default = return everything that is left, all sellable, refund method/amount decided by the server
     await waitFor(() =>
-      expect(returnOrder).toHaveBeenCalledWith(5, "Wrong item", {
-        items: [{ orderItemId: 1, quantity: 4, damagedQuantity: 0 }],
-      }),
+      expect(returnOrder).toHaveBeenCalledWith(
+        5,
+        "Wrong item",
+        { items: [{ orderItemId: 1, quantity: 4, damagedQuantity: 0 }] },
+        expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/),
+      ),
     );
     await waitFor(() => expect(getOrder).toHaveBeenCalledTimes(2)); // reloaded
   });
@@ -138,11 +141,16 @@ describe("OrderDetailsPage - returns", () => {
     await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
 
     await waitFor(() =>
-      expect(returnOrder).toHaveBeenCalledWith(5, "Two were broken", {
-        items: [{ orderItemId: 1, quantity: 2, damagedQuantity: 1 }],
-        refundMethod: "Card",
-        refundAmount: 50,
-      }),
+      expect(returnOrder).toHaveBeenCalledWith(
+        5,
+        "Two were broken",
+        {
+          items: [{ orderItemId: 1, quantity: 2, damagedQuantity: 1 }],
+          refundMethod: "Card",
+          refundAmount: 50,
+        },
+        expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/),
+      ),
     );
   });
 
@@ -364,5 +372,145 @@ describe("OrderDetailsPage - payment idempotency key", () => {
 
     expect(createPayment).toHaveBeenCalledTimes(1);
     release({ id: 1 });
+  });
+});
+
+describe("OrderDetailsPage - return idempotency key", () => {
+  const KEY_FORMAT = /^[A-Za-z0-9_-]{16,64}$/;
+  const uncertain = () => ({ isAxiosError: true, code: "ERR_NETWORK", message: "Network Error" });
+  const keyOf = (call: number) => returnOrder.mock.calls[call][3] as string;
+
+  beforeEach(() => {
+    roles = ["Admin"];
+    accessToken = null;
+    getOrder.mockReset();
+    getOrderPayments.mockReset();
+    returnOrder.mockReset();
+    createPayment.mockReset();
+    getOrder.mockResolvedValue(order());
+    getOrderPayments.mockResolvedValue(summary());
+  });
+
+  /** Opens the return form, types a reason and presses the return button. */
+  async function submitReturn(ev: ReturnType<typeof userEvent.setup>, reason = "Wrong item") {
+    await ev.click(await screen.findByRole("button", { name: T("ord.return") }));
+    const dialog = screen.getByRole("dialog");
+    await ev.type(within(dialog).getByRole("textbox"), reason);
+    await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
+    return dialog;
+  }
+
+  it("KEEPS the key after an uncertain outcome, so pressing the button again cannot return twice", async () => {
+    const ev = userEvent.setup();
+    returnOrder.mockRejectedValueOnce(uncertain()).mockResolvedValueOnce(order({ status: "Returned" }));
+    renderPage();
+
+    const dialog = await submitReturn(ev);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(T("ord.returnUncertain"));
+
+    await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
+    await waitFor(() => expect(returnOrder).toHaveBeenCalledTimes(2));
+
+    expect(keyOf(0)).toMatch(KEY_FORMAT);
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it("closing and REOPENING the form after an uncertain outcome continues the same operation (same key)", async () => {
+    const ev = userEvent.setup();
+    returnOrder.mockRejectedValueOnce(uncertain()).mockResolvedValueOnce(order({ status: "Returned" }));
+    renderPage();
+
+    const dialog = await submitReturn(ev);
+    await within(dialog).findByText(T("ord.returnUncertain"));
+    await ev.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await submitReturn(ev);   // reopen, type the reason again, send
+    await waitFor(() => expect(returnOrder).toHaveBeenCalledTimes(2));
+
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it("makes a NEW key after a definite refusal, so the next try is a new operation", async () => {
+    const ev = userEvent.setup();
+    returnOrder
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 400, data: { code: "QUANTITY_EXCEEDS_REMAINING", message: "x" } } })
+      .mockResolvedValueOnce(order({ status: "Returned" }));
+    renderPage();
+
+    const dialog = await submitReturn(ev);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(T("ord.err.QUANTITY_EXCEEDS_REMAINING"));
+
+    await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
+    await waitFor(() => expect(returnOrder).toHaveBeenCalledTimes(2));
+
+    expect(keyOf(1)).toMatch(KEY_FORMAT);
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("shows a translated message when the server says the key belongs to a different return, and starts a new key", async () => {
+    const ev = userEvent.setup();
+    returnOrder
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { code: "IDEMPOTENCY_KEY_REUSED", message: "x" } } })
+      .mockResolvedValueOnce(order({ status: "Returned" }));
+    renderPage();
+
+    const dialog = await submitReturn(ev);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(T("ord.err.RETURN_KEY_REUSED"));
+
+    await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
+    await waitFor(() => expect(returnOrder).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("after a successful return, the next return (a new partial return) gets its own key", async () => {
+    const ev = userEvent.setup();
+    returnOrder.mockResolvedValue(order({ status: "PartiallyReturned" }));
+    renderPage();
+
+    await submitReturn(ev, "First part");
+    await waitFor(() => expect(returnOrder).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await submitReturn(ev, "Second part");
+    await waitFor(() => expect(returnOrder).toHaveBeenCalledTimes(2));
+
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("a double click on the return button sends one request", async () => {
+    const ev = userEvent.setup();
+    let release: (v: unknown) => void = () => {};
+    returnOrder.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: T("ord.return") }));
+    const dialog = screen.getByRole("dialog");
+    await ev.type(within(dialog).getByRole("textbox"), "Wrong item");
+    await ev.dblClick(within(dialog).getByRole("button", { name: T("ord.return") }));
+
+    expect(returnOrder).toHaveBeenCalledTimes(1);
+    release(order({ status: "Returned" }));
+  });
+
+  it("closing and reopening the PAYMENT form after an uncertain outcome continues the same payment (same key)", async () => {
+    const ev = userEvent.setup();
+    getOrderPayments.mockResolvedValue(summary({ totalPaid: 0, outstandingBalance: 400, paymentState: "Unpaid" }));
+    createPayment.mockRejectedValueOnce(uncertain()).mockResolvedValueOnce({ id: 1 });
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    let dialog = screen.getByRole("dialog");
+    await ev.click(within(dialog).getByRole("button", { name: T("common.save") }));
+    await within(dialog).findByText(T("ord.paymentUncertain"));
+    await ev.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await ev.click(screen.getByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    dialog = screen.getByRole("dialog");
+    await ev.click(within(dialog).getByRole("button", { name: T("common.save") }));
+    await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(2));
+
+    expect(createPayment.mock.calls[1][5]).toBe(createPayment.mock.calls[0][5]);
   });
 });

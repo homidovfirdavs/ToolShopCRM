@@ -30,6 +30,10 @@ const drill = { id: 1, name: "Drill X", sku: "DR-1", barcode: null, categoryName
 const saw = { id: 2, name: "Saw Y", sku: "SW-1", barcode: null, categoryName: "Saws", brandName: "B", purchasePrice: 100, salePrice: 150, isActive: true };
 
 const apiErr = (status: number, data: unknown) => ({ response: { status, data } });
+const KEY_FORMAT = /^[A-Za-z0-9_-]{16,64}$/;
+/** No answer from the server (network failure / timeout): the sale may or may not have been completed. */
+const noAnswer = () => ({ isAxiosError: true, code: "ERR_NETWORK", message: "Network Error" });
+const keyOfCall = (call: number) => completeOrder.mock.calls[call][2] as string;
 
 async function openPos() {
   const user = userEvent.setup();
@@ -102,7 +106,7 @@ describe("PosPage", () => {
       items: [{ productId: 1, quantity: 1, discountAmount: 0 }],
     });
     expect(completeOrder).toHaveBeenCalledTimes(1);
-    expect(completeOrder).toHaveBeenCalledWith(77, { amount: 500, method: "Cash", referenceNumber: "", notes: "" });
+    expect(completeOrder).toHaveBeenCalledWith(77, { amount: 500, method: "Cash", referenceNumber: "", notes: "" }, expect.stringMatching(KEY_FORMAT));
     expect(cancelOrder).not.toHaveBeenCalled();
     expect(screen.getByText(/ORD-77/)).toBeInTheDocument();
   });
@@ -163,7 +167,7 @@ describe("PosPage", () => {
     await user.click(await screen.findByRole("button", { name: T("pos.confirmSale") }));
     await screen.findByText(T("pos.saleDone"));
     expect(createOrder.mock.calls[0][0]).toMatchObject({ customerId: 5 });
-    expect(completeOrder).toHaveBeenCalledWith(77, { amount: 200, method: "Cash", referenceNumber: "", notes: "" });
+    expect(completeOrder).toHaveBeenCalledWith(77, { amount: 200, method: "Cash", referenceNumber: "", notes: "" }, expect.stringMatching(KEY_FORMAT));
     expect(screen.getByText(T("pos.debt"))).toBeInTheDocument();
     expect(screen.getAllByText("300 TJS").length).toBeGreaterThan(0);
   });
@@ -179,5 +183,108 @@ describe("PosPage", () => {
     await user.click(within(dialog).getByRole("button", { name: T("pos.resume") }));
     await waitFor(() => expect(screen.queryByText(T("pos.cartEmpty"))).not.toBeInTheDocument());
     expect(JSON.parse(localStorage.getItem("toolshop_pos_held") ?? "[]")).toHaveLength(0);
+  });
+
+  describe("idempotent sale (uncertain outcome)", () => {
+    async function confirmSale(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(completeBtn());
+      await user.click(await screen.findByRole("button", { name: T("pos.confirmSale") }));
+    }
+
+    it("sends a valid Idempotency-Key with the sale", async () => {
+      const user = await openPos();
+      await addDrill(user);
+      await confirmSale(user);
+      await screen.findByText(T("pos.saleDone"));
+      expect(keyOfCall(0)).toMatch(KEY_FORMAT);
+    });
+
+    it("no answer: keeps the cart, says the outcome is unknown, and does NOT cancel the draft", async () => {
+      completeOrder.mockRejectedValueOnce(noAnswer());
+      const user = await openPos();
+      await addDrill(user);
+      await confirmSale(user);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(T("pos.saleUncertain"));
+      expect(cancelOrder).not.toHaveBeenCalled();
+      expect(screen.queryByText(T("pos.saleDone"))).not.toBeInTheDocument();
+      expect(screen.getAllByText("Drill X").length).toBeGreaterThan(1);   // cart kept
+    });
+
+    it("pressing Confirm again re-sends the SAME draft with the SAME key - no second draft, no second sale", async () => {
+      completeOrder.mockRejectedValueOnce(noAnswer());
+      const user = await openPos();
+      await addDrill(user);
+      await confirmSale(user);
+      await screen.findByText(T("pos.saleUncertain"));
+
+      await confirmSale(user);
+      await screen.findByText(T("pos.saleDone"));
+
+      expect(createOrder).toHaveBeenCalledTimes(1);            // the draft is reused
+      expect(completeOrder).toHaveBeenCalledTimes(2);
+      expect(completeOrder.mock.calls[1][0]).toBe(completeOrder.mock.calls[0][0]);   // same draft
+      expect(keyOfCall(1)).toBe(keyOfCall(0));                  // same key
+      expect(cancelOrder).not.toHaveBeenCalled();
+    });
+
+    it("changing the cart after an unknown outcome is a NEW sale: new draft, new key, the old draft is cancelled", async () => {
+      createOrder.mockResolvedValueOnce({ id: 77 }).mockResolvedValueOnce({ id: 78 });
+      completeOrder.mockRejectedValueOnce(noAnswer());
+      const user = await openPos();
+      await addDrill(user);
+      await confirmSale(user);
+      await screen.findByText(T("pos.saleUncertain"));
+
+      await user.click(screen.getAllByText("Saw Y")[0]);        // the cashier changes the sale
+      await confirmSale(user);
+      await screen.findByText(T("pos.saleDone"));
+
+      expect(cancelOrder).toHaveBeenCalledWith(77);
+      expect(createOrder).toHaveBeenCalledTimes(2);
+      expect(completeOrder.mock.calls[1][0]).toBe(78);
+      expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+
+    it("a definite refusal drops the attempt: the next try is a new draft with a new key", async () => {
+      createOrder.mockResolvedValueOnce({ id: 77 }).mockResolvedValueOnce({ id: 78 });
+      completeOrder.mockRejectedValueOnce(apiErr(400, { code: "WALKIN_FULL_PAYMENT_REQUIRED", message: "x" }));
+      const user = await openPos();
+      await addDrill(user);
+      await confirmSale(user);
+      await screen.findByText(T("pos.errWalkInFull"));
+      expect(cancelOrder).toHaveBeenCalledWith(77);
+
+      await confirmSale(user);
+      await screen.findByText(T("pos.saleDone"));
+
+      expect(createOrder).toHaveBeenCalledTimes(2);
+      expect(completeOrder.mock.calls[1][0]).toBe(78);
+      expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+
+    it("after a successful sale the next sale gets its own key", async () => {
+      const user = await openPos();
+      await addDrill(user);
+      await confirmSale(user);
+      await screen.findByText(T("pos.saleDone"));
+      await user.click(screen.getByRole("button", { name: T("pos.newSale") }));
+
+      await addDrill(user);
+      await confirmSale(user);
+      await waitFor(() => expect(completeOrder).toHaveBeenCalledTimes(2));
+
+      expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+
+    it("the server saying the key belongs to a different sale shows a translated message and drops the attempt", async () => {
+      completeOrder.mockRejectedValueOnce(apiErr(409, { code: "IDEMPOTENCY_KEY_REUSED", message: "x" }));
+      const user = await openPos();
+      await addDrill(user);
+      await confirmSale(user);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(T("pos.errSaleKeyReused"));
+      expect(cancelOrder).toHaveBeenCalledWith(77);
+    });
   });
 });

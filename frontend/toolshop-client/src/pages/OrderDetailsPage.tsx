@@ -90,6 +90,12 @@ export default function OrderDetailsPage() {
   const [saving, setSaving] = useState(false);
   // Idempotency key of the payment being entered: one per user intention (made when the form opens, kept while the outcome is unknown).
   const paymentKey = useRef("");
+  // A payment with no answer may already be saved: reopening the form must continue THAT operation (same key), not start a new one.
+  const uncertainPayment = useRef<{ orderId: number; totalPaid: number } | null>(null);
+
+  // Idempotency key of the return being entered (one per return operation) and the uncertain one that may already be recorded.
+  const returnKey = useRef("");
+  const uncertainReturn = useRef<{ orderId: number; returnsCount: number } | null>(null);
 
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnReason, setReturnReason] = useState("");
@@ -107,7 +113,16 @@ export default function OrderDetailsPage() {
     setMethod("Cash");
     setReference("");
     setModalError(null);
-    paymentKey.current = newIdempotencyKey();
+    const pendingPayment = uncertainPayment.current;
+    const samePayment =
+      pendingPayment !== null &&
+      pendingPayment.orderId === order.id &&
+      pendingPayment.totalPaid === (summary?.totalPaid ?? 0) &&
+      paymentKey.current !== "";
+    if (!samePayment) {
+      paymentKey.current = newIdempotencyKey();
+      uncertainPayment.current = null;
+    }
     setModalOpen(true);
   }
 
@@ -124,16 +139,19 @@ export default function OrderDetailsPage() {
     try {
       await createPayment(order.id, value, method, reference.trim(), "", paymentKey.current);
       paymentKey.current = "";
+      uncertainPayment.current = null;
       toast.success(t("ord.paymentSaved"));
       setModalOpen(false);
       reload();
     } catch (err) {
       if (isUncertainOutcome(err)) {
         // No answer / server error: the payment may already be saved. KEEP the key - pressing Save again cannot double-book.
+        uncertainPayment.current = { orderId: order.id, totalPaid: summary?.totalPaid ?? 0 };
         setModalError(t("ord.paymentUncertain"));
       } else {
         // A definite answer: the next try is a new intention.
         paymentKey.current = newIdempotencyKey();
+        uncertainPayment.current = null;
         setModalError(
           errorCode(err) === "IDEMPOTENCY_KEY_REUSED"
             ? t("ord.err.IDEMPOTENCY_KEY_REUSED")
@@ -159,6 +177,19 @@ export default function OrderDetailsPage() {
     setRetAmount("");
     setReturnReason("");
     setReturnError(null);
+
+    // Reopening after an uncertain outcome continues the SAME operation (same key) as long as the order did not change since;
+    // otherwise this is a new return and gets a new key.
+    const pendingReturn = uncertainReturn.current;
+    const sameReturn =
+      pendingReturn !== null &&
+      pendingReturn.orderId === order.id &&
+      pendingReturn.returnsCount === (order.returns?.length ?? 0) &&
+      returnKey.current !== "";
+    if (!sameReturn) {
+      returnKey.current = newIdempotencyKey();
+      uncertainReturn.current = null;
+    }
     setReturnOpen(true);
   }
 
@@ -187,22 +218,43 @@ export default function OrderDetailsPage() {
       return setReturnError(t("ord.returnInvalidRefund"));
     }
 
+    if (!returnKey.current) returnKey.current = newIdempotencyKey();
     setReturning(true);
     setReturnError(null);
     try {
-      await returnOrder(order.id, reason, {
-        items: lines,
-        ...(retMethod ? { refundMethod: retMethod } : {}),
-        ...(refundAmount !== undefined ? { refundAmount } : {}),
-      });
+      await returnOrder(
+        order.id,
+        reason,
+        {
+          items: lines,
+          ...(retMethod ? { refundMethod: retMethod } : {}),
+          ...(refundAmount !== undefined ? { refundAmount } : {}),
+        },
+        returnKey.current,
+      );
+      returnKey.current = "";
+      uncertainReturn.current = null;
       toast.success(t("ord.returnDone"));
       setReturnOpen(false);
       reload();
     } catch (err) {
-      const code = errorCode(err);
-      setReturnError(
-        code && RETURN_ERROR_CODES.includes(code) ? t(`ord.err.${code}`) : (errorMessage(err) ?? t("ord.returnFailed")),
-      );
+      if (isUncertainOutcome(err)) {
+        // No answer / server error: the return may already be recorded. KEEP the key - pressing the button again cannot refund twice.
+        uncertainReturn.current = { orderId: order.id, returnsCount: order.returns?.length ?? 0 };
+        setReturnError(t("ord.returnUncertain"));
+      } else {
+        // A definite answer: the next try is a new operation.
+        returnKey.current = newIdempotencyKey();
+        uncertainReturn.current = null;
+        const code = errorCode(err);
+        setReturnError(
+          code === "IDEMPOTENCY_KEY_REUSED"
+            ? t("ord.err.RETURN_KEY_REUSED")
+            : code && RETURN_ERROR_CODES.includes(code)
+              ? t(`ord.err.${code}`)
+              : (errorMessage(err) ?? t("ord.returnFailed")),
+        );
+      }
     } finally {
       setReturning(false);
     }

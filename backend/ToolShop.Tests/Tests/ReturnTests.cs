@@ -16,7 +16,7 @@ namespace ToolShop.Tests.Tests;
 public class ReturnTests(ApiFactory factory) : TestBase(factory)
 {
     private Task<HttpResponseMessage> ReturnOrderAsync(int id, string reason = "Customer changed their mind", HttpClient? client = null) =>
-        (client ?? Admin).PostAsJsonAsync($"/api/orders/{id}/return", new { reason });
+        PostWithKeyAsync(client ?? Admin, $"/api/orders/{id}/return", new { reason }, NewKey());
 
     private async Task<System.Text.Json.JsonElement> FinanceAsync()
     {

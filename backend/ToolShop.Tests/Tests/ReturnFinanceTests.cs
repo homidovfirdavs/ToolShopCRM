@@ -31,7 +31,7 @@ public class ReturnFinanceTests(ApiFactory factory) : TestBase(factory)
         new { orderItemId, quantity, damagedQuantity = damaged };
 
     private Task<HttpResponseMessage> ReturnAsync(int orderId, object? items = null) =>
-        Admin.PostAsJsonAsync($"/api/orders/{orderId}/return", new { reason = "Customer returned goods", items });
+        PostWithKeyAsync(Admin, $"/api/orders/{orderId}/return", new { reason = "Customer returned goods", items }, NewKey());
 
     /// <summary>price 100, cost 60: sells 5 units 40 days ago (fully paid in cash), moves the sale AND its payment into the past.</summary>
     private async Task<(int OrderId, int ItemId, int ProductId)> OldSaleAsync(decimal? paid = null)

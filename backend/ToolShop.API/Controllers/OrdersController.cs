@@ -6,6 +6,7 @@ using ToolShop.API.DTOs.Sales;
 using ToolShop.Domain.Authorization;
 using ToolShop.Domain.Entities.Sales;
 using ToolShop.Infrastructure.Audit;
+using ToolShop.Infrastructure.Idempotency;
 using ToolShop.Infrastructure.Payments;
 using ToolShop.Infrastructure.Persistence;
 using ToolShop.Infrastructure.Sales;
@@ -31,6 +32,41 @@ public class OrdersController : ControllerBase
 
     private string? CurrentUserId =>
         User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
+
+    private const string IdempotencyKeyHeader = "Idempotency-Key";
+    private const string ReplayHeader = "Idempotent-Replay";
+
+    private static readonly System.Text.RegularExpressions.Regex IdempotencyKeyFormat =
+        new("^[A-Za-z0-9_-]{16,64}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Reads the mandatory Idempotency-Key header (16-64 chars of A-Z a-z 0-9 _ -); on failure returns the 400 to send.</summary>
+    private bool TryReadIdempotencyKey(string operation, out string key, out IActionResult? error)
+    {
+        key = Request.Headers[IdempotencyKeyHeader].ToString().Trim();
+        error = null;
+
+        if (string.IsNullOrEmpty(key))
+        {
+            error = BadRequest(new
+            {
+                code = "IDEMPOTENCY_KEY_REQUIRED",
+                message = $"The Idempotency-Key header is required to {operation}."
+            });
+            return false;
+        }
+
+        if (!IdempotencyKeyFormat.IsMatch(key))
+        {
+            error = BadRequest(new
+            {
+                code = "IDEMPOTENCY_KEY_INVALID",
+                message = "The Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'."
+            });
+            return false;
+        }
+
+        return true;
+    }
 
     private async Task<OrderResponse> ToResponseAsync(Order o)
     {
@@ -345,11 +381,17 @@ public class OrdersController : ControllerBase
         return Ok(await ToResponseAsync(updated));
     }
 
+    /// <summary>
+    /// Completes a draft (stock out + optional initial payment, atomically). Requires an Idempotency-Key header: the same key
+    /// with the same request returns the completed order again (HTTP 200 plus "Idempotent-Replay: true") and changes / audits
+    /// nothing; the same key with a different request is 409 IDEMPOTENCY_KEY_REUSED.
+    /// </summary>
     [HttpPost("{id:int}/complete")]
     [Authorize(Roles = "Admin,Manager,Cashier")]
     public async Task<IActionResult> Complete(int id, [FromBody] CompleteOrderRequest? request = null)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
+        if (!TryReadIdempotencyKey("complete a sale", out var idempotencyKey, out var keyError)) return keyError!;
 
         var ip = request?.InitialPayment;
         var initialPayment = ip is null
@@ -358,15 +400,24 @@ public class OrdersController : ControllerBase
 
         try
         {
-            var order = await _orderService.CompleteAsync(id, CurrentUserId!, initialPayment);
+            var result = await _orderService.CompleteAsync(id, CurrentUserId!, idempotencyKey, initialPayment);
+            var order = result.Order;
 
-            await _auditService.LogAsync(CurrentUserId, "Order.Complete", "Order", order.Id.ToString(),
-                $"Order {order.OrderNumber} completed. Total: {order.TotalAmount}, Items: {order.Items.Count}.");
-
-            if (initialPayment is not null)
+            if (result.Replayed)
             {
-                await _auditService.LogAsync(CurrentUserId, "Payment.Create", "Order", order.Id.ToString(),
-                    $"Initial payment of {initialPayment.Amount} ({initialPayment.Method}) recorded atomically with completion of {order.OrderNumber}.");
+                // Same request seen before: nothing was done now, so nothing is audited.
+                Response.Headers[ReplayHeader] = "true";
+            }
+            else
+            {
+                await _auditService.LogAsync(CurrentUserId, "Order.Complete", "Order", order.Id.ToString(),
+                    $"Order {order.OrderNumber} completed. Total: {order.TotalAmount}, Items: {order.Items.Count}.");
+
+                if (initialPayment is not null)
+                {
+                    await _auditService.LogAsync(CurrentUserId, "Payment.Create", "Order", order.Id.ToString(),
+                        $"Initial payment of {initialPayment.Amount} ({initialPayment.Method}) recorded atomically with completion of {order.OrderNumber}.");
+                }
             }
 
             var completed = await _db.Orders
@@ -380,6 +431,10 @@ public class OrdersController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Order not found." });
+        }
+        catch (OperationKeyReusedException ex)
+        {
+            return Conflict(new { code = "IDEMPOTENCY_KEY_REUSED", message = ex.Message });
         }
         catch (OrderAlreadyCompletedException)
         {
@@ -463,6 +518,7 @@ public class OrdersController : ControllerBase
     public async Task<IActionResult> Return(int id, [FromBody] ReturnOrderRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
+        if (!TryReadIdempotencyKey("return goods", out var idempotencyKey, out var keyError)) return keyError!;
 
         try
         {
@@ -472,14 +528,22 @@ public class OrdersController : ControllerBase
                 request.RefundMethod,
                 request.RefundAmount);
 
-            var result = await _orderService.ReturnAsync(id, CurrentUserId!, input);
+            var result = await _orderService.ReturnAsync(id, CurrentUserId!, idempotencyKey, input);
             var ret = result.Return;
 
-            await _auditService.LogAsync(CurrentUserId, "Order.Return", "Order", id.ToString(),
-                $"Return {ret.ReturnNumber} on order {result.Order.OrderNumber} ({(result.Order.Status == OrderStatus.Returned ? "order fully returned" : "partial")}). " +
-                $"Lines: {ret.Items.Count}, goods value: {ret.GoodsValue}, restocked: {ret.Items.Sum(i => i.RestockedQuantity)}, written off: {ret.Items.Sum(i => i.WrittenOffQuantity)}, " +
-                $"refunded: {ret.RefundAmount}{(ret.RefundMethod is null ? "" : $" ({ret.RefundMethod})")}. Reason: {request.Reason.Trim()}",
-                ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString());
+            if (result.Replayed)
+            {
+                // The same return was already recorded by an earlier request: nothing was done now, so nothing is audited.
+                Response.Headers[ReplayHeader] = "true";
+            }
+            else
+            {
+                await _auditService.LogAsync(CurrentUserId, "Order.Return", "Order", id.ToString(),
+                    $"Return {ret.ReturnNumber} on order {result.Order.OrderNumber} ({(result.Order.Status == OrderStatus.Returned ? "order fully returned" : "partial")}). " +
+                    $"Lines: {ret.Items.Count}, goods value: {ret.GoodsValue}, restocked: {ret.Items.Sum(i => i.RestockedQuantity)}, written off: {ret.Items.Sum(i => i.WrittenOffQuantity)}, " +
+                    $"refunded: {ret.RefundAmount}{(ret.RefundMethod is null ? "" : $" ({ret.RefundMethod})")}. Reason: {request.Reason.Trim()}",
+                    ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString());
+            }
 
             var returned = await _db.Orders
                 .Include(o => o.Customer)
@@ -492,6 +556,10 @@ public class OrdersController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Order not found." });
+        }
+        catch (OperationKeyReusedException ex)
+        {
+            return Conflict(new { code = "IDEMPOTENCY_KEY_REUSED", message = ex.Message });
         }
         catch (OrderNotReturnableException ex)
         {
@@ -553,4 +621,4 @@ public class OrdersController : ControllerBase
     }
 
 
-}
+}

@@ -27,7 +27,8 @@ public class IdempotentPaymentTests(ApiFactory factory) : TestBase(factory)
         return (orderId, customer);
     }
 
-    private Task<int> RecordCountAsync() => Factory.WithDbAsync(db => db.IdempotencyRecords.CountAsync());
+    // Only the payment keys: completing the sales that these tests set up stores its own "order.complete" keys (F1b).
+    private Task<int> RecordCountAsync() => Factory.WithDbAsync(db => db.IdempotencyRecords.CountAsync(r => r.Scope == "payment.create"));
 
     // ---------------- same request, same key ----------------
 
@@ -316,7 +317,7 @@ public class IdempotentPaymentTests(ApiFactory factory) : TestBase(factory)
         await resp.ShouldBeAsync(HttpStatusCode.Created);
         var paymentId = (await resp.ReadJsonAsync()).Int("id");
 
-        var row = await Factory.WithDbAsync(db => db.IdempotencyRecords.AsNoTracking().SingleAsync());
+        var row = await Factory.WithDbAsync(db => db.IdempotencyRecords.AsNoTracking().SingleAsync(r => r.Scope == "payment.create"));
         Assert.Equal("payment.create", row.Scope);
         Assert.Equal(key, row.Key);
         Assert.Equal(nameof(Payment), row.ResultEntityType);

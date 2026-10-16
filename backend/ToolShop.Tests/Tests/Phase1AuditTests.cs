@@ -256,7 +256,7 @@ public class Phase1AuditTests(ApiFactory factory) : TestBase(factory)
         Assert.Equal(500m, oldBefore.Dec("revenue"));
         Assert.Equal(500m, oldBefore.Dec("paymentsReceived"));
 
-        await (await Admin.PostAsJsonAsync($"/api/orders/{id}/return", new { reason = "test" })).ShouldBeAsync(HttpStatusCode.OK);
+        await (await PostWithKeyAsync(Admin, $"/api/orders/{id}/return", new { reason = "test" }, NewKey())).ShouldBeAsync(HttpStatusCode.OK);
 
         var oldAfter = await (await Admin.GetAsync(Range(-45, -35))).ReadJsonAsync();
         var todayAfter = await (await Admin.GetAsync(Range(-1, 1))).ReadJsonAsync();

@@ -167,13 +167,29 @@ public abstract class TestBase : IAsyncLifetime
         return (json.GetProperty("id").GetInt32(), json.GetProperty("totalAmount").GetDecimal());
     }
 
-    /// <summary>POST /api/orders/{id}/complete, optionally with an initial payment (Cash).</summary>
-    protected Task<HttpResponseMessage> CompleteAsync(int orderId, decimal? initialPayment = null, HttpClient? client = null)
+    /// <summary>
+    /// POST /api/orders/{id}/complete, optionally with an initial payment (Cash). Every call is a NEW user intention with its
+    /// own Idempotency-Key, unless a key is passed to send the same request again.
+    /// </summary>
+    protected Task<HttpResponseMessage> CompleteAsync(int orderId, decimal? initialPayment = null, HttpClient? client = null,
+        string? key = null)
     {
-        object? body = initialPayment is null
+        object body = initialPayment is null
             ? new { }
             : new { initialPayment = new { amount = initialPayment.Value, method = "Cash" } };
-        return (client ?? Admin).PostAsJsonAsync($"/api/orders/{orderId}/complete", body);
+        return PostWithKeyAsync(client ?? Admin, $"/api/orders/{orderId}/complete", body, key ?? NewKey());
+    }
+
+    /// <summary>POST with a JSON body and the given Idempotency-Key (null = send no header).</summary>
+    protected static Task<HttpResponseMessage> PostWithKeyAsync(HttpClient client, string url, object body, string? key)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
+        if (key is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+        }
+
+        return client.SendAsync(request);
     }
 
     /// <summary>A fresh Idempotency-Key (one per user intention).</summary>

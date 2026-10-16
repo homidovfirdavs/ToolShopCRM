@@ -5,6 +5,7 @@ using ToolShop.Domain.Entities.Inventory;
 using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Purchases;
 using ToolShop.Domain.Entities.Sales;
+using ToolShop.Infrastructure.Idempotency;
 using ToolShop.Infrastructure.Payments;
 using ToolShop.Infrastructure.Persistence;
 
@@ -45,7 +46,11 @@ public record ReturnLineInput(int OrderItemId, int Quantity, int DamagedQuantity
 public record ReturnInput(string Reason, List<ReturnLineInput>? Lines, PaymentMethod? RefundMethod, decimal? RefundAmount);
 
 /// <summary>Outcome of one return operation.</summary>
-public record OrderReturnResult(Order Order, OrderReturn Return, int ItemCount, decimal RefundedAmount);
+/// <param name="Replayed">True when this is the result stored by an earlier request with the same Idempotency-Key (nothing was changed now).</param>
+public record OrderReturnResult(Order Order, OrderReturn Return, int ItemCount, decimal RefundedAmount, bool Replayed = false);
+
+/// <summary>Outcome of completing a sale. <paramref name="Replayed"/>: the sale was completed by an earlier request with the same Idempotency-Key.</summary>
+public record OrderCompleteResult(Order Order, bool Replayed);
 
 public class InsufficientStockForSaleException : Exception
 {
@@ -102,10 +107,16 @@ public class OrderService
 /// Completes a draft order. When <paramref name="initialPayment"/> is supplied it is recorded in the SAME
 /// serializable transaction (stock deduction + completion + payment are all-or-nothing).
 /// Business rule: a walk-in order (CustomerId == null) can only be completed with a payment covering the full total.
+/// Idempotent per (user, <paramref name="idempotencyKey"/>): the same request sent again (double click, retry after a lost
+/// answer) returns the order the first request completed and changes nothing. The key is stored in the SAME transaction, so a
+/// rejected sale (stock, walk-in rule, 5xx) leaves its key free for a corrected retry.
 /// </summary>
-public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymentInput? initialPayment = null)
+public async Task<OrderCompleteResult> CompleteAsync(
+        int orderId, string userId, string idempotencyKey, InitialPaymentInput? initialPayment = null)
     {
-        const int maxRetries = 3;
+        // Same-key losers retry once into the replay; extra headroom for ordinary 40001s.
+        const int maxRetries = 5;
+        var requestHash = OrderRequestHash.ForComplete(orderId, initialPayment);
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -114,6 +125,21 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
             try
             {
                 transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+                // 1) Claim the key (or find the stored result of an identical earlier request).
+                var (idem, replayed) = await IdempotencyGate.BeginAsync(
+                    _db, IdempotencyGate.CompleteScope, userId, idempotencyKey, requestHash, nameof(Order));
+
+                if (replayed)
+                {
+                    var stored = await _db.Orders.AsNoTracking()
+                        .Include(o => o.Items).ThenInclude(i => i.Product)
+                        .FirstOrDefaultAsync(o => o.Id == idem.ResultEntityId)
+                        ?? throw new InvalidOperationException("Idempotency record points to an order that does not exist.");
+
+                    await transaction.CommitAsync();
+                    return new OrderCompleteResult(stored, Replayed: true);
+                }
 
                 var order = await _db.Orders
                     .Include(o => o.Items).ThenInclude(i => i.Product)
@@ -263,12 +289,14 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
                     });
                 }
 
+                idem.ResultEntityId = order.Id;
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
 
-                return order;
+                return new OrderCompleteResult(order, Replayed: false);
             }
-            catch (Exception ex) when (ToolShop.Infrastructure.Persistence.SerializationFailure.IsRetryable(ex) && attempt < maxRetries)
+            catch (Exception ex) when (IdempotencyGate.IsRetryable(ex) && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
                 _db.ChangeTracker.Clear(); // drop half-applied entities before retrying
@@ -319,9 +347,14 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
     /// takes the rounding remainder, so all returns together add up to exactly what was sold.
     /// Refund = money actually paid back; limited to what the customer overpaid; defaults to that limit.
     /// </summary>
-    public async Task<OrderReturnResult> ReturnAsync(int orderId, string userId, ReturnInput input)
+    /// <remarks>
+    /// Idempotent per (user, <paramref name="idempotencyKey"/>): the same return sent again returns the stored one and creates
+    /// no second ledger row, refund or stock movement. A genuinely NEW partial return needs a NEW key.
+    /// </remarks>
+    public async Task<OrderReturnResult> ReturnAsync(int orderId, string userId, string idempotencyKey, ReturnInput input)
     {
-        const int maxRetries = 3;
+        const int maxRetries = 5;
+        var requestHash = OrderRequestHash.ForReturn(orderId, input);
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -330,6 +363,24 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
             try
             {
                 transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+                // Claim the key first (before the return number is drawn), or find the stored result of an identical earlier request.
+                var (idem, replayed) = await IdempotencyGate.BeginAsync(
+                    _db, IdempotencyGate.ReturnScope, userId, idempotencyKey, requestHash, nameof(OrderReturn));
+
+                if (replayed)
+                {
+                    var storedReturn = await _db.OrderReturns.AsNoTracking()
+                        .Include(r => r.Items)
+                        .FirstOrDefaultAsync(r => r.Id == idem.ResultEntityId)
+                        ?? throw new InvalidOperationException("Idempotency record points to a return that does not exist.");
+                    var storedOrder = await _db.Orders.AsNoTracking()
+                        .Include(o => o.Items)
+                        .FirstAsync(o => o.Id == storedReturn.OrderId);
+
+                    await transaction.CommitAsync();
+                    return new OrderReturnResult(storedOrder, storedReturn, storedReturn.Items.Count, storedReturn.RefundAmount, Replayed: true);
+                }
 
                 var order = await _db.Orders
                     .Include(o => o.Items)
@@ -498,11 +549,15 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
                 _db.OrderReturns.Add(ledger);
 
                 await _db.SaveChangesAsync();
+
+                idem.ResultEntityId = ledger.Id; // the ledger id exists only after the first save
+                await _db.SaveChangesAsync();
+
                 await transaction.CommitAsync();
 
                 return new OrderReturnResult(order, ledger, ledger.Items.Count, ledger.RefundAmount);
             }
-            catch (Exception ex) when (ToolShop.Infrastructure.Persistence.SerializationFailure.IsRetryable(ex) && attempt < maxRetries)
+            catch (Exception ex) when (IdempotencyGate.IsRetryable(ex) && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
                 _db.ChangeTracker.Clear();
@@ -526,4 +581,4 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
             try { await transaction.RollbackAsync(); } catch { /* already rolled back */ }
         }
     }
-}
+}

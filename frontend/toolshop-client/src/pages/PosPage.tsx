@@ -8,7 +8,8 @@ import { getSingleStock } from "../api/inventory";
 import type { PaymentMethod } from "../api/payments";
 import { useI18n } from "../i18n/useI18n";
 import { useAsyncData } from "../lib/useAsyncData";
-import { errorCode, errorMessage, errorShortages } from "../lib/apiError";
+import { errorCode, errorMessage, errorShortages, isUncertainOutcome } from "../lib/apiError";
+import { newIdempotencyKey } from "../lib/idempotency";
 import { formatDateTime, formatMoney, formatNumber } from "../lib/format";
 import PageHeader from "../components/ui/PageHeader";
 import Card from "../components/ui/Card";
@@ -298,6 +299,10 @@ export default function PosPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
   const submitting = useRef(false);
+  // The sale being sent: its draft (once created), its Idempotency-Key and a fingerprint of what was sent. After an UNCERTAIN
+  // outcome (no answer) the next Confirm re-sends THIS sale with the SAME key - the server never sells it twice - instead of
+  // creating a new draft and a new sale. It is dropped on success, on a definite answer, or when the cart is changed.
+  const pendingSale = useRef<{ draftId: number | null; key: string; signature: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
 
   const validate = useCallback((): boolean => {
@@ -333,6 +338,7 @@ export default function PosPage() {
   }, []);
 
   function resetSale() {
+    pendingSale.current = null;
     setCart([]);
     setDiscountAmount("0");
     setCustomerId(null);
@@ -354,22 +360,46 @@ export default function PosPage() {
     }
     submitting.current = true;
     setProcessing(true);
-    let draftId: number | null = null;
+
+    // Same sale as an earlier attempt with an unknown outcome? Then continue THAT sale (same draft, same key).
+    const signature = JSON.stringify({
+      cart: cart.map((l) => [l.productId, l.quantity]),
+      customerId,
+      discount,
+      payNow,
+      method,
+      reference: reference.trim(),
+    });
+    if (pendingSale.current && pendingSale.current.signature !== signature) {
+      // The cashier changed the sale: the earlier attempt is abandoned (best effort; harmless if it had really been completed).
+      const abandoned = pendingSale.current.draftId;
+      pendingSale.current = null;
+      if (abandoned !== null) await cancelOrder(abandoned).catch(() => undefined);
+    }
+    const attempt = (pendingSale.current ??= { draftId: null, key: newIdempotencyKey(), signature });
+
+    let phase: "draft" | "complete" = "draft";
     try {
-      const order = await createOrder({
-        customerId,
-        notes: "",
-        discountAmount: discount,
-        items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity, discountAmount: 0 })),
-      });
-      draftId = order.id;
+      let draftId = attempt.draftId;
+      if (draftId === null) {
+        const order: { id: number } = await createOrder({
+          customerId,
+          notes: "",
+          discountAmount: discount,
+          items: cart.map((l) => ({ productId: l.productId, quantity: l.quantity, discountAmount: 0 })),
+        });
+        draftId = order.id;
+        attempt.draftId = draftId;
+      }
+      phase = "complete";
       // One atomic server call: stock deduction + completion + initial payment (all-or-nothing).
       // The server also enforces "walk-in must be paid in full".
       const completed = await completeOrder(
-        order.id,
+        draftId,
         payNow > 0 ? { amount: payNow, method, referenceNumber: reference.trim(), notes: "" } : undefined,
+        attempt.key,
       );
-      draftId = null;
+      pendingSale.current = null;
       setReceipt({
         orderNumber: completed.orderNumber,
         date: completed.completedAt ?? completed.createdAt,
@@ -388,11 +418,22 @@ export default function PosPage() {
       setConfirmOpen(false);
     } catch (err) {
       setConfirmOpen(false);
-      if (draftId !== null) {
-        // Sale was rejected: do not leave an orphan draft behind (best effort).
-        await cancelOrder(draftId).catch(() => undefined);
+      if (phase === "complete" && isUncertainOutcome(err)) {
+        // No answer / server error: the sale may already be completed. KEEP the draft and the key; pressing Confirm again
+        // re-sends the same sale and can never sell it twice.
+        setError(t("pos.saleUncertain"));
+        return;
       }
-      if (errorCode(err) === "WALKIN_FULL_PAYMENT_REQUIRED") {
+
+      const failedDraft = attempt.draftId;
+      pendingSale.current = null;
+      if (failedDraft !== null) {
+        // Sale was rejected: do not leave an orphan draft behind (best effort).
+        await cancelOrder(failedDraft).catch(() => undefined);
+      }
+      if (errorCode(err) === "IDEMPOTENCY_KEY_REUSED") {
+        setError(t("pos.errSaleKeyReused"));
+      } else if (errorCode(err) === "WALKIN_FULL_PAYMENT_REQUIRED") {
         setError(t("pos.errWalkInFull"));
         setWalkInHint(true);
       } else if (errorShortages(err).length > 0) {
