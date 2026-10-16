@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
+import { ScanBarcode } from "lucide-react";
 import { getCategories, getProducts, type ProductListItem } from "../api/catalog";
 import { getCustomers, createCustomer, type CustomerListItem } from "../api/customers";
 import { createOrder, completeOrder, cancelOrder } from "../api/orders";
+import { getSingleStock } from "../api/inventory";
 import type { PaymentMethod } from "../api/payments";
 import { useI18n } from "../i18n/useI18n";
 import { useAsyncData } from "../lib/useAsyncData";
@@ -20,6 +22,8 @@ import { useToast } from "../components/ui/useToast";
 import { useOnline } from "../pwa/useOnline";
 import { inputClass } from "../components/ui/formStyles";
 import CategoryPanel from "../components/pos/CategoryPanel";
+import BarcodeScanner, { type ScanFeedback } from "../components/pos/BarcodeScanner";
+import { findProductByCode, normalizeBarcode } from "../lib/barcode";
 import { useCategoryNames } from "../lib/categoryNames";
 
 interface CartLine {
@@ -122,6 +126,75 @@ export default function PosPage() {
       return;
     }
     setCart((prev) => prev.map((l) => (l.productId === productId ? { ...l, quantity } : l)));
+  }
+
+  // ---------- camera barcode scanner ----------
+  // Scanning only FINDS a product and puts it in the SAME cart as a tap on a product card. Stock is never touched here:
+  // it is re-checked and deducted by the server when the sale is completed.
+  const [scanOpen, setScanOpen] = useState(false);
+  const cartRef = useRef<CartLine[]>([]);
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
+
+  function removeOne(productId: number) {
+    setCart((prev) =>
+      prev.flatMap((l) => (l.productId !== productId ? [l] : l.quantity > 1 ? [{ ...l, quantity: l.quantity - 1 }] : [])),
+    );
+  }
+
+  async function handleScan(raw: string): Promise<ScanFeedback> {
+    const code = normalizeBarcode(raw);
+    if (!online) return { kind: "error", title: t("pos.scanOffline"), lines: [code] };
+
+    let product: ProductListItem | null;
+    try {
+      product = await findProductByCode(code);
+    } catch {
+      return { kind: "error", title: t("common.loadFailed"), lines: [code] };
+    }
+    if (!product) return { kind: "error", title: t("pos.scanNotFound"), lines: [code, t("pos.scanNotFoundHint")] };
+
+    // Current stock is shown and used as a first check. Unknown stock is NOT treated as zero: the product is added
+    // with a warning and the server decides when the sale is completed.
+    let stock: number | null;
+    try {
+      stock = (await getSingleStock(product.id)).currentStock;
+    } catch {
+      stock = null;
+    }
+    const inCart = cartRef.current.find((l) => l.productId === product.id)?.quantity ?? 0;
+
+    if (stock !== null && stock <= 0) {
+      return { kind: "error", title: t("pos.scanOutOfStock"), lines: [product.name, `${t("pos.scanStock")}: 0`] };
+    }
+    if (stock !== null && inCart + 1 > stock) {
+      return {
+        kind: "error",
+        title: t("pos.scanNotEnough"),
+        lines: [product.name, `${t("pos.scanStock")}: ${formatNumber(stock)} · ${t("pos.scanInCart")}: ${formatNumber(inCart)}`],
+      };
+    }
+
+    addToCart(product);
+    return {
+      kind: stock === null ? "warn" : "ok",
+      title: t("pos.scanAdded"),
+      productId: product.id,
+      lines: [
+        product.name,
+        formatMoney(product.salePrice),
+        `${t("pos.scanInCart")}: ${formatNumber(inCart + 1)} · ${stock === null ? t("pos.scanStockUnknown") : `${t("pos.scanStock")}: ${formatNumber(stock)}`}`,
+      ],
+    };
+  }
+
+  function finishScan() {
+    setScanOpen(false);
+    // On a phone the cart is below the product list: bring it into view.
+    if (window.matchMedia?.("(max-width: 1279px)").matches) {
+      window.setTimeout(() => document.getElementById("pos-cart")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    }
   }
 
   async function onSearchKey(e: KeyboardEvent<HTMLDivElement>) {
@@ -446,8 +519,18 @@ export default function PosPage() {
         {/* LEFT: search + categories + product cards */}
         <div className="min-w-0 space-y-4">
           <Card>
-            <div onKeyDown={onSearchKey}>
-              <SearchInput value={searchText} onChange={setSearchText} placeholder={t("pos.searchProducts")} />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1" onKeyDown={onSearchKey}>
+                <SearchInput value={searchText} onChange={setSearchText} placeholder={t("pos.searchProducts")} />
+              </div>
+              <Button
+                data-testid="pos-scan-open"
+                onClick={() => setScanOpen(true)}
+                disabled={!online}
+                className="w-full !py-3 text-base sm:w-auto sm:!py-2 sm:text-sm"
+              >
+                <ScanBarcode size={20} aria-hidden="true" /> {t("pos.scanBtn")}
+              </Button>
             </div>
           </Card>
 
@@ -738,6 +821,16 @@ export default function PosPage() {
           </div>
         </div>
       )}
+
+      <BarcodeScanner
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onDone={finishScan}
+        onCode={handleScan}
+        onRemoveOne={removeOne}
+        cartCount={cart.length}
+        cartTotal={formatMoney(total)}
+      />
 
       <ConfirmDialog
         open={confirmOpen}

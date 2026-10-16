@@ -30,3 +30,6 @@ test-results
 e2e-pwa-report
 e2e-pwa-results
 e2e-pwa-shots
+
+# local HTTPS certificate for phone testing (mkcert) - never commit keys
+.certs/

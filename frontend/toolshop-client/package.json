@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --mode lan",
+    "dev:lan-http": "vite --mode lanhttp",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -17,6 +19,8 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
     "axios": "^1.20.0",
     "lucide-react": "^1.52.0",
     "react": "^19.2.8",
