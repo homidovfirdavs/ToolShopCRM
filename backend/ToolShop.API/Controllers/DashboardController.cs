@@ -20,8 +20,8 @@ public class DashboardController : ControllerBase
 
     private static (DateTime From, DateTime To) ResolveRange(DateTime? from, DateTime? to)
     {
-        var effectiveTo = to ?? DateTime.UtcNow.Date;
-        var effectiveFrom = from ?? effectiveTo.AddDays(-29);
+        var effectiveTo = to?.Date ?? ToolShop.Infrastructure.Finance.ReportingClock.LocalToday(); // F2: shop-local today
+        var effectiveFrom = from?.Date ?? effectiveTo.AddDays(-29);
         return (effectiveFrom, effectiveTo);
     }
 

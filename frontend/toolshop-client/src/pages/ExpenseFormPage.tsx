@@ -10,6 +10,7 @@ import {
 } from "../api/finance";
 import { useI18n } from "../i18n/useI18n";
 import { useAsyncData } from "../lib/useAsyncData";
+import { toDateStr } from "../lib/dateRange";
 import { errorMessage } from "../lib/apiError";
 import PageHeader from "../components/ui/PageHeader";
 import Card from "../components/ui/Card";
@@ -47,7 +48,7 @@ function ExpenseForm({ categories, expense }: { categories: ExpenseCategory[]; e
   const [categoryId, setCategoryId] = useState(expense ? String(expense.categoryId) : "");
   const [amount, setAmount] = useState(expense ? String(expense.amount) : "");
   const [expenseDate, setExpenseDate] = useState(
-    expense ? expense.expenseDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    expense ? expense.expenseDate.slice(0, 10) : toDateStr(new Date()),
   );
   const [description, setDescription] = useState(expense?.description ?? "");
   const [referenceNumber, setReferenceNumber] = useState(expense?.referenceNumber ?? "");

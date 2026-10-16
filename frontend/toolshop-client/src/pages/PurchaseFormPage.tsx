@@ -5,6 +5,7 @@ import { getSuppliers } from "../api/suppliers";
 import { getProducts, type ProductListItem } from "../api/catalog";
 import { useI18n } from "../i18n/useI18n";
 import { useAsyncData } from "../lib/useAsyncData";
+import { toDateStr } from "../lib/dateRange";
 import { formatMoney, formatNumber } from "../lib/format";
 import PageHeader from "../components/ui/PageHeader";
 import Card from "../components/ui/Card";
@@ -26,7 +27,7 @@ export default function PurchaseFormPage() {
   const suppliers = useAsyncData(() => getSuppliers({ isActive: true, pageSize: 100 }), "active-suppliers");
 
   const [supplierId, setSupplierId] = useState("");
-  const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 10));
+  const [purchaseDate, setPurchaseDate] = useState(toDateStr(new Date())); // F2: the shop-local day, not the UTC day
   const [notes, setNotes] = useState("");
   const [discountAmount, setDiscountAmount] = useState("0");
   const [items, setItems] = useState<DraftItem[]>([]);

@@ -39,7 +39,10 @@ public class FinanceService
         _db = db;
     }
 
-    private static DateTime ToUtc(DateTime d) => DateTime.SpecifyKind(d.Date, DateTimeKind.Utc);
+    // F2: a report "day" is a LOCAL (shop) day. `d` is a local calendar date; the result is the UTC instant of its local midnight.
+    // Orders, payments and returns are real instants and are bucketed by their local date. Expense/Purchase dates are calendar
+    // dates stored at 00:00 UTC, so they are never shifted: they stay on the day the user chose (they fall inside the shifted window).
+    private static DateTime ToUtc(DateTime d) => ReportingClock.StartOfLocalDayUtc(d);
 
     // TASK C3 - returns are booked in the period of the RETURN, the sale stays in the period of the SALE:
     //   Revenue_P  = sum(Total of sold orders by OrderDate) - sum(GoodsValue of returns by ReturnedAt)       (may be negative)
@@ -163,18 +166,18 @@ public class FinanceService
             .ToListAsync();
 
         var days = new List<DailyFinanceResult>();
-        for (var d = fromUtc.Date; d < toUtc; d = d.AddDays(1))
+        for (var d = from.Date; d <= to.Date; d = d.AddDays(1))
         {
             var dateOnly = DateOnly.FromDateTime(d);
-            var dayItems = items.Where(i => i.OrderDate.Date == d).ToList();
-            var dayReturns = returns.Where(r => r.ReturnedAt.Date == d).ToList();
-            var dayReturnItems = returnItems.Where(r => r.ReturnedAt.Date == d && r.RestockedQuantity > 0).ToList();
+            var dayItems = items.Where(i => ReportingClock.ToLocal(i.OrderDate).Date == d).ToList();
+            var dayReturns = returns.Where(r => ReportingClock.ToLocal(r.ReturnedAt).Date == d).ToList();
+            var dayReturnItems = returnItems.Where(r => ReportingClock.ToLocal(r.ReturnedAt).Date == d && r.RestockedQuantity > 0).ToList();
 
-            var dayRevenue = orders.Where(o => o.OrderDate.Date == d).Sum(o => o.TotalAmount) - dayReturns.Sum(r => r.GoodsValue);
+            var dayRevenue = orders.Where(o => ReportingClock.ToLocal(o.OrderDate).Date == d).Sum(o => o.TotalAmount) - dayReturns.Sum(r => r.GoodsValue);
             var dayCogs = dayItems.Where(i => i.CostAtSale != null).Sum(i => i.Quantity * i.CostAtSale!.Value)
                 - dayReturnItems.Where(i => i.CostAtSaleSnapshot != null).Sum(i => i.RestockedQuantity * i.CostAtSaleSnapshot!.Value);
             var dayExpenses = expenses.Where(e => e.ExpenseDate.Date == d).Sum(e => e.Amount);
-            var dayPayments = payments.Where(p => p.CreatedAt.Date == d).Sum(p => p.Amount) - dayReturns.Sum(r => r.RefundAmount);
+            var dayPayments = payments.Where(p => ReportingClock.ToLocal(p.CreatedAt).Date == d).Sum(p => p.Amount) - dayReturns.Sum(r => r.RefundAmount);
             var dayGrossProfit = dayRevenue - dayCogs;
             // A day's gross profit is only trustworthy when every sold / restocked item that day has a known cost snapshot.
             var hasCompleteCostData = dayItems.All(i => i.CostAtSale != null)
@@ -229,8 +232,14 @@ public class FinanceService
             .Select(p => new { p.PurchaseDate, p.TotalAmount })
             .ToListAsync();
 
-        var months = orders.Select(o => new { o.OrderDate.Year, o.OrderDate.Month })
-            .Concat(returns.Select(r => new { r.ReturnedAt.Year, r.ReturnedAt.Month }))
+        static bool InMonth(DateTime utc, int year, int month)
+        {
+            var local = ReportingClock.ToLocal(utc);
+            return local.Year == year && local.Month == month;
+        }
+
+        var months = orders.Select(o => new { ReportingClock.ToLocal(o.OrderDate).Year, ReportingClock.ToLocal(o.OrderDate).Month })
+            .Concat(returns.Select(r => new { ReportingClock.ToLocal(r.ReturnedAt).Year, ReportingClock.ToLocal(r.ReturnedAt).Month }))
             .Concat(expenses.Select(e => new { e.ExpenseDate.Year, e.ExpenseDate.Month }))
             .Concat(purchases.Select(p => new { p.PurchaseDate.Year, p.PurchaseDate.Month }))
             .Distinct()
@@ -240,15 +249,15 @@ public class FinanceService
         var result = new List<MonthlyFinanceResult>();
         foreach (var m in months)
         {
-            var monthReturns = returns.Where(r => r.ReturnedAt.Year == m.Year && r.ReturnedAt.Month == m.Month).ToList();
-            var monthRevenue = orders.Where(o => o.OrderDate.Year == m.Year && o.OrderDate.Month == m.Month).Sum(o => o.TotalAmount)
+            var monthReturns = returns.Where(r => InMonth(r.ReturnedAt, m.Year, m.Month)).ToList();
+            var monthRevenue = orders.Where(o => InMonth(o.OrderDate, m.Year, m.Month)).Sum(o => o.TotalAmount)
                 - monthReturns.Sum(r => r.GoodsValue);
-            var monthCogs = items.Where(i => i.OrderDate.Year == m.Year && i.OrderDate.Month == m.Month && i.CostAtSale != null)
+            var monthCogs = items.Where(i => InMonth(i.OrderDate, m.Year, m.Month) && i.CostAtSale != null)
                     .Sum(i => i.Quantity * i.CostAtSale!.Value)
-                - returnItems.Where(i => i.ReturnedAt.Year == m.Year && i.ReturnedAt.Month == m.Month && i.CostAtSaleSnapshot != null)
+                - returnItems.Where(i => InMonth(i.ReturnedAt, m.Year, m.Month) && i.CostAtSaleSnapshot != null)
                     .Sum(i => i.RestockedQuantity * i.CostAtSaleSnapshot!.Value);
             var monthExpenses = expenses.Where(e => e.ExpenseDate.Year == m.Year && e.ExpenseDate.Month == m.Month).Sum(e => e.Amount);
-            var monthPayments = payments.Where(p => p.CreatedAt.Year == m.Year && p.CreatedAt.Month == m.Month).Sum(p => p.Amount)
+            var monthPayments = payments.Where(p => InMonth(p.CreatedAt, m.Year, m.Month)).Sum(p => p.Amount)
                 - monthReturns.Sum(r => r.RefundAmount);
             var monthPurchaseSpend = purchases.Where(p => p.PurchaseDate.Year == m.Year && p.PurchaseDate.Month == m.Month).Sum(p => p.TotalAmount);
             var monthGrossProfit = monthRevenue - monthCogs;

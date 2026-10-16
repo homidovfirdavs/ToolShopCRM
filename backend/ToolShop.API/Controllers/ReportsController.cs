@@ -27,16 +27,23 @@ public class ReportsController : ControllerBase
         _financeService = financeService;
     }
 
-   private static (DateTime From, DateTime To) ResolveRange(DateTime? from, DateTime? to)
-{
-    var toDate = to.HasValue ? DateTime.SpecifyKind(to.Value, DateTimeKind.Utc).Date : DateTime.UtcNow.Date;
-    var fromDate = from.HasValue ? DateTime.SpecifyKind(from.Value, DateTimeKind.Utc).Date : toDate.AddDays(-29);
+    // F2: the requested days are LOCAL (shop) days. Row reports compare real instants, so the window is
+    // [local midnight of "from", last tick of local day "to"] expressed in UTC.
+    private static (DateTime From, DateTime To) ResolveRange(DateTime? from, DateTime? to)
+    {
+        var (fromDate, toDate) = ResolveLocalDates(from, to);
+        var effectiveFrom = ToolShop.Infrastructure.Finance.ReportingClock.StartOfLocalDayUtc(fromDate);
+        var effectiveTo = ToolShop.Infrastructure.Finance.ReportingClock.StartOfLocalDayUtc(toDate.AddDays(1)).AddTicks(-1); // end of the "to" day, inclusive
+        return (effectiveFrom, effectiveTo);
+    }
 
-    var effectiveFrom = fromDate;
-    var effectiveTo = toDate.AddDays(1).AddTicks(-1); // то охири рӯзи "to", фарогир (inclusive)
-
-    return (effectiveFrom, effectiveTo);
-}
+    /// <summary>The same range as plain local calendar dates, for FinanceService (it shifts to UTC itself).</summary>
+    private static (DateTime From, DateTime To) ResolveLocalDates(DateTime? from, DateTime? to)
+    {
+        var toDate = to?.Date ?? ToolShop.Infrastructure.Finance.ReportingClock.LocalToday();
+        var fromDate = from?.Date ?? toDate.AddDays(-29);
+        return (fromDate, toDate);
+    }
 
     // ===================== SALES REPORT =====================
 
@@ -390,7 +397,7 @@ public class ReportsController : ControllerBase
         [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         [FromQuery] string sortBy = "revenue", [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var (f, t) = ResolveRange(from, to);
+        var (f, t) = ResolveLocalDates(from, to);
         var (items, total) = await _financeService.GetProfitByProductAsync(f, t, sortBy, page, pageSize);
 
                 return Ok(new PagedResult<ProductPerformanceRowResponse>
@@ -410,7 +417,7 @@ public class ReportsController : ControllerBase
     public async Task<ActionResult<List<CategoryPerformanceRowResponse>>> GetCategoryPerformance(
         [FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
-        var (f, t) = ResolveRange(from, to);
+        var (f, t) = ResolveLocalDates(from, to);
                 var items = await _financeService.GetProfitByCategoryAsync(f, t);
         return Ok(items.Select(r => new CategoryPerformanceRowResponse(
             r.Category, r.QuantitySold, r.Revenue, r.Cogs, r.GrossProfit, r.MarginPercent, r.HasCompleteCostData)).ToList());
@@ -422,7 +429,7 @@ public class ReportsController : ControllerBase
     public async Task<ActionResult<ProfitabilityReportResponse>> GetProfitability(
         [FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
-        var (f, t) = ResolveRange(from, to);
+        var (f, t) = ResolveLocalDates(from, to);
         var finance = await _financeService.GetSummaryAsync(f, t);
         var hasCompleteCostData = finance.UnknownCostItemsCount == 0;
 

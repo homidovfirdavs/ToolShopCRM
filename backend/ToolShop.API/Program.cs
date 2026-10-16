@@ -196,6 +196,10 @@ builder.Services.AddScoped<ToolShop.Infrastructure.Reports.ReportsService>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
+// F2: reports use the shop's local day (default UTC+5, Tajikistan, no DST). Override with Reporting:UtcOffsetHours.
+ToolShop.Infrastructure.Finance.ReportingClock.Configure(
+    builder.Configuration.GetValue("Reporting:UtcOffsetHours", ToolShop.Infrastructure.Finance.ReportingClock.DefaultUtcOffsetHours));
+
 var app = builder.Build();
 
 // --- Middleware pipeline ---
