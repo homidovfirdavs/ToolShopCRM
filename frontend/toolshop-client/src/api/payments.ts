@@ -52,8 +52,10 @@ export interface PaymentQuery {
 export interface OrderPaymentSummary {
   orderTotal: number;
   totalPaid: number;
-  /** Money given back because the order was returned. */
+  /** Money actually paid back to the customer because of returns. */
   refundedTotal?: number;
+  /** Value of the goods that came back (reduces what the customer owes). */
+  returnedValue?: number;
   outstandingBalance: number;
   paymentState: OrderPaymentState;
   payments: PaymentListItem[];

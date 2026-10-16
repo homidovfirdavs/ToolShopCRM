@@ -69,7 +69,7 @@ function renderPage() {
   );
 }
 
-describe("OrderDetailsPage - full return", () => {
+describe("OrderDetailsPage - returns", () => {
   beforeEach(() => {
     roles = ["Admin"];
     accessToken = null;
@@ -96,7 +96,12 @@ describe("OrderDetailsPage - full return", () => {
     await ev.type(within(dialog).getByRole("textbox"), "Wrong item");
     await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
 
-    await waitFor(() => expect(returnOrder).toHaveBeenCalledWith(5, "Wrong item"));
+    // default = return everything that is left, all sellable, refund method/amount decided by the server
+    await waitFor(() =>
+      expect(returnOrder).toHaveBeenCalledWith(5, "Wrong item", {
+        items: [{ orderItemId: 1, quantity: 4, damagedQuantity: 0 }],
+      }),
+    );
     await waitFor(() => expect(getOrder).toHaveBeenCalledTimes(2)); // reloaded
   });
 
@@ -111,6 +116,93 @@ describe("OrderDetailsPage - full return", () => {
     await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(T("ord.err.ORDER_NOT_RETURNABLE"));
+  });
+
+  it("a partial return sends the chosen units, the damaged units, the refund method and the refund amount", async () => {
+    const ev = userEvent.setup();
+    returnOrder.mockResolvedValue(order({ status: "PartiallyReturned" }));
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: T("ord.return") }));
+    const dialog = screen.getByRole("dialog");
+
+    const qty = within(dialog).getByLabelText(`${T("ord.retQty")}: Drill X`);
+    const damaged = within(dialog).getByLabelText(`${T("ord.retDamaged")}: Drill X`);
+    await ev.clear(qty);
+    await ev.type(qty, "2");
+    await ev.type(damaged, "1");
+    await ev.selectOptions(within(dialog).getByRole("combobox"), "Card");
+    await ev.type(within(dialog).getByLabelText(new RegExp(T("ord.retAmount"))), "50");
+    await ev.type(within(dialog).getByRole("textbox"), "Two were broken");
+    await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
+
+    await waitFor(() =>
+      expect(returnOrder).toHaveBeenCalledWith(5, "Two were broken", {
+        items: [{ orderItemId: 1, quantity: 2, damagedQuantity: 1 }],
+        refundMethod: "Card",
+        refundAmount: 50,
+      }),
+    );
+  });
+
+  it("rejects impossible quantities on the client and calls nothing", async () => {
+    const ev = userEvent.setup();
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: T("ord.return") }));
+    const dialog = screen.getByRole("dialog");
+    const qty = within(dialog).getByLabelText(`${T("ord.retQty")}: Drill X`);
+    await ev.clear(qty);
+    await ev.type(qty, "9"); // only 4 are left
+    await ev.type(within(dialog).getByRole("textbox"), "Too many");
+    await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(T("ord.returnInvalidQty"));
+
+    await ev.clear(qty);
+    await ev.type(qty, "0");
+    await ev.click(within(dialog).getByRole("button", { name: T("ord.return") }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(T("ord.returnNothing"));
+    expect(returnOrder).not.toHaveBeenCalled();
+  });
+
+  it("a partially returned order lists its returns, shows only the units that are left and still allows return and payment", async () => {
+    const ev = userEvent.setup();
+    getOrder.mockResolvedValue(
+      order({
+        status: "PartiallyReturned",
+        returnedAt: "2026-10-02T09:00:00Z",
+        returnedByUsername: "manager1",
+        returnReason: "Broken",
+        refundedAmount: 0,
+        returnedValue: 200,
+        returns: [
+          {
+            id: 1,
+            returnNumber: "RET-000001",
+            returnedAt: "2026-10-02T09:00:00Z",
+            returnedByUsername: "manager1",
+            reason: "Broken",
+            goodsValue: 200,
+            refundAmount: 0,
+            refundMethod: null,
+            items: [{ orderItemId: 1, productId: 1, productName: "Drill X", quantity: 2, restockedQuantity: 1, writtenOffQuantity: 1, netValue: 200 }],
+          },
+        ],
+      }),
+    );
+    getOrderPayments.mockResolvedValue(summary({ totalPaid: 100, outstandingBalance: 100, paymentState: "PartiallyPaid", returnedValue: 200 }));
+    renderPage();
+
+    const list = await screen.findByTestId("return-list");
+    expect(within(list).getByText("RET-000001")).toBeInTheDocument();
+    expect(within(list).getByText("Drill X × 2")).toBeInTheDocument();
+    expect(screen.getAllByText(T("ord.status.PartiallyReturned")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: `+ ${T("ord.addPayment")}` })).toBeInTheDocument();
+
+    await ev.click(screen.getByRole("button", { name: T("ord.return") }));
+    const dialog = screen.getByRole("dialog");
+    // 4 sold, 2 already returned -> 2 left, prefilled
+    expect(within(dialog).getByLabelText(`${T("ord.retQty")}: Drill X`)).toHaveValue(2);
   });
 
   it("a Cashier (no Sales.Return) does not see the return button", async () => {

@@ -227,6 +227,52 @@ export function exportPaymentReport(params: Omit<PaymentReportParams, "page" | "
   return downloadCsv("/reports/payments/export", params, "payment-report.csv");
 }
 
+// ===================== RETURNS REPORT (by date of the RETURN) =====================
+
+export interface ReturnReportRow {
+  returnId: number;
+  returnNumber: string;
+  returnedAt: string;
+  orderId: number;
+  orderNumber: string;
+  customerName: string | null;
+  returnedByUserName: string;
+  reason: string;
+  returnedUnits: number;
+  restockedUnits: number;
+  writtenOffUnits: number;
+  goodsValue: number;
+  refundAmount: number;
+  refundMethod: string | null;
+  /** null = cost unknown (show N/A, never 0). */
+  costReversed: number | null;
+  writeOffCost: number | null;
+}
+
+export interface ReturnsReport {
+  items: ReturnReportRow[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  returnsCount: number;
+  goodsValue: number;
+  refundsPaid: number;
+  /** null = at least one return in the period has an unknown cost. */
+  costReversed: number | null;
+  writeOffCost: number | null;
+}
+
+export async function getReturnsReport(params: {
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<ReturnsReport> {
+  const res = await apiClient.get("/reports/returns", { params });
+  return res.data;
+}
+
 // ===================== PRODUCT PERFORMANCE REPORT =====================
 
 export interface ProductPerformanceRow {

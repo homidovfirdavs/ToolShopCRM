@@ -10,6 +10,7 @@ import CustomerDebtReportTab from "./reports/CustomerDebtReportTab";
 import PurchaseReportTab from "./reports/PurchaseReportTab";
 import ExpenseReportTab from "./reports/ExpenseReportTab";
 import PaymentReportTab from "./reports/PaymentReportTab";
+import ReturnsReportTab from "./reports/ReturnsReportTab";
 import ProductPerformanceReportTab from "./reports/ProductPerformanceReportTab";
 import CategoryPerformanceReportTab from "./reports/CategoryPerformanceReportTab";
 import ProfitabilityReportTab from "./reports/ProfitabilityReportTab";
@@ -27,6 +28,7 @@ const TABS: TabDef[] = [
   { key: "purchases", labelKey: "rep.purchases", component: PurchaseReportTab },
   { key: "expenses", labelKey: "rep.expenses", component: ExpenseReportTab },
   { key: "payments", labelKey: "rep.payments", component: PaymentReportTab },
+  { key: "returns", labelKey: "rep.returns", component: ReturnsReportTab },
   { key: "product-performance", labelKey: "rep.product", component: ProductPerformanceReportTab },
   { key: "category-performance", labelKey: "rep.category", component: CategoryPerformanceReportTab },
   { key: "profitability", labelKey: "rep.profit", component: ProfitabilityReportTab },
