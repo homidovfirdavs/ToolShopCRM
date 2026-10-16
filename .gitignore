@@ -42,3 +42,7 @@ deploy/.env.*
 deploy/certs/*
 !deploy/certs/.gitkeep
 backups/
+
+# Database backups and generated migration scripts: never commit
+backups/
+*.dump
