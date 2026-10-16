@@ -50,3 +50,15 @@ export function errorCode(err: unknown): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * True when the request may or may not have been carried out: the server never answered (network failure, timeout) or a
+ * server / gateway error (5xx) came back. A definite answer (2xx, 4xx) is NOT uncertain. For money operations the same
+ * Idempotency-Key must be kept and sent again, never a new one.
+ */
+export function isUncertainOutcome(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  if ((err as { isAxiosError?: boolean }).isAxiosError !== true) return false;
+  const status = errorStatus(err);
+  return status === undefined || status >= 500;
+}

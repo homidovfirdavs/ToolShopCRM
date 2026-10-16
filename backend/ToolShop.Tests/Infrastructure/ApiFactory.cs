@@ -150,6 +150,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// <summary>Deletes ALL business data (orders, payments, stock, catalog, customers). Users and roles are kept.</summary>
     public Task ResetDataAsync() => WithDbAsync(async db =>
     {
+        await db.IdempotencyRecords.ExecuteDeleteAsync(); // keys of money operations (no foreign keys)
         await db.OrderReturnItems.ExecuteDeleteAsync();   // ledger rows reference orders (Restrict) - delete first
         await db.OrderReturns.ExecuteDeleteAsync();
         await db.Payments.ExecuteDeleteAsync();

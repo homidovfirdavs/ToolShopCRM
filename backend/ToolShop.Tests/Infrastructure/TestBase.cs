@@ -176,8 +176,28 @@ public abstract class TestBase : IAsyncLifetime
         return (client ?? Admin).PostAsJsonAsync($"/api/orders/{orderId}/complete", body);
     }
 
-    protected Task<HttpResponseMessage> PayAsync(int orderId, decimal amount, HttpClient? client = null) =>
-        (client ?? Admin).PostAsJsonAsync("/api/payments", new { orderId, amount, method = "Cash" });
+    /// <summary>A fresh Idempotency-Key (one per user intention).</summary>
+    protected static string NewKey() => Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// POST /api/payments. Every call is a NEW user intention: it gets its own Idempotency-Key unless a key is passed to
+    /// send the same request again.
+    /// </summary>
+    protected Task<HttpResponseMessage> PayAsync(int orderId, decimal amount, HttpClient? client = null,
+        string? key = null, string method = "Cash") =>
+        SendPaymentAsync(client ?? Admin, new { orderId, amount, method }, key ?? NewKey());
+
+    /// <summary>POST /api/payments with an arbitrary body and the given Idempotency-Key (null = send no header).</summary>
+    protected static Task<HttpResponseMessage> SendPaymentAsync(HttpClient client, object body, string? key)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/payments") { Content = JsonContent.Create(body) };
+        if (key is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+        }
+
+        return client.SendAsync(request);
+    }
 
     /// <summary>Creates a customer order and completes it WITHOUT payment (credit sale). Returns (orderId, total).</summary>
     protected async Task<(int Id, decimal Total)> CreateCompletedCreditOrderAsync(int customerId, int productId, int quantity)

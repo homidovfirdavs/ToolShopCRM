@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using ToolShop.Domain.Entities.Idempotency;
 using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Sales;
 using ToolShop.Infrastructure.Persistence;
@@ -19,6 +20,13 @@ public class OrderNotEligibleForPaymentException(string reason) : Exception(reas
 
 public class WalkInCreditNotAllowedException()
     : Exception("Walk-in sale must be fully paid. Partial payment or credit requires an identified customer.");
+
+/// <summary>The Idempotency-Key was already used for a DIFFERENT payment request (other order, amount, method...).</summary>
+public class IdempotencyKeyReusedException()
+    : Exception("This Idempotency-Key was already used for a different payment request.");
+
+/// <summary>Result of creating a payment: the payment, and whether it is the one stored by an earlier identical request.</summary>
+public record PaymentCreateResult(Payment Payment, bool Replayed);
 
 public class PaymentAlreadyVoidedException() : Exception("Payment has already been voided.");
 
@@ -62,15 +70,29 @@ public class PaymentService
         return balances.Values.Sum(b => b.Outstanding);
     }
 
-    public async Task<Payment> CreateAsync(
-        int orderId, decimal amount, PaymentMethod method, string? referenceNumber, string? notes, string userId)
+    public const string CreateScope = "payment.create";
+    private const int IdempotencyRetentionDays = 30;
+
+    /// <summary>
+    /// Records a payment exactly once per (user, Idempotency-Key). Sending the same request again with the same key (double
+    /// click, retry after a timeout, two devices racing) returns the payment stored the first time and creates nothing.
+    /// The key is stored in the SAME serializable transaction as the payment: a rejected request (overpayment, walk-in rule,
+    /// 5xx) rolls both back, so its key stays free for a corrected retry. The key is claimed BEFORE the payment number is drawn,
+    /// so a losing duplicate never consumes a number.
+    /// </summary>
+    public async Task<PaymentCreateResult> CreateAsync(
+        int orderId, decimal amount, PaymentMethod method, string? referenceNumber, string? notes, string userId,
+        string idempotencyKey)
     {
         if (amount <= 0)
         {
             throw new ArgumentException("Payment amount must be greater than zero.");
         }
 
-        const int maxRetries = 3;
+        var requestHash = PaymentRequestHash.Compute(orderId, amount, method, referenceNumber, notes);
+
+        // Losers of a same-key race retry once (the winner's stored key is then visible); extra headroom for other 40001s.
+        const int maxRetries = 5;
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -80,6 +102,49 @@ public class PaymentService
             {
                 transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
 
+                // 1) Already done by this user with this key?
+                var idem = await _db.IdempotencyRecords.FirstOrDefaultAsync(r =>
+                    r.Scope == CreateScope && r.UserId == userId && r.Key == idempotencyKey);
+
+                if (idem is not null && idem.ExpiresAt > DateTime.UtcNow)
+                {
+                    if (idem.RequestHash != requestHash)
+                    {
+                        throw new IdempotencyKeyReusedException();
+                    }
+
+                    var stored = await _db.Payments.AsNoTracking().FirstOrDefaultAsync(p => p.Id == idem.ResultEntityId)
+                        ?? throw new InvalidOperationException("Idempotency record points to a payment that does not exist.");
+
+                    await transaction.CommitAsync();
+                    return new PaymentCreateResult(stored, Replayed: true);
+                }
+
+                if (idem is not null)
+                {
+                    // Expired: forget it so the same key can be used again.
+                    _db.IdempotencyRecords.Remove(idem);
+                    await _db.SaveChangesAsync();
+                }
+
+                // 2) Claim the key first. A concurrent request with the same key blocks here until we commit, then fails
+                //    (unique violation / serialization failure) and retries into step 1.
+                var now = DateTime.UtcNow;
+                idem = new IdempotencyRecord
+                {
+                    Scope = CreateScope,
+                    UserId = userId,
+                    Key = idempotencyKey,
+                    RequestHash = requestHash,
+                    ResultEntityType = nameof(Payment),
+                    ResultEntityId = 0,
+                    CreatedAt = now,
+                    ExpiresAt = now.AddDays(IdempotencyRetentionDays)
+                };
+                _db.IdempotencyRecords.Add(idem);
+                await _db.SaveChangesAsync();
+
+                // 3) Business rules (unchanged).
                 var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
                 if (order is null)
                 {
@@ -123,11 +188,17 @@ public class PaymentService
 
                 _db.Payments.Add(payment);
                 await _db.SaveChangesAsync();
+
+                idem.ResultEntityId = payment.Id;
+                await _db.SaveChangesAsync();
+
                 await transaction.CommitAsync();
 
-                return payment;
+                return new PaymentCreateResult(payment, Replayed: false);
             }
-            catch (Exception ex) when (ToolShop.Infrastructure.Persistence.SerializationFailure.IsRetryable(ex) && attempt < maxRetries)
+            catch (Exception ex) when ((ToolShop.Infrastructure.Persistence.SerializationFailure.IsRetryable(ex)
+                                        || ToolShop.Infrastructure.Persistence.IdempotencyKeyConflict.Is(ex))
+                                       && attempt < maxRetries)
             {
                 await SafeRollbackAsync(transaction);
                 _db.ChangeTracker.Clear(); // drop half-applied entities so a retry cannot duplicate them
@@ -223,4 +294,4 @@ public class PaymentService
             try { await transaction.RollbackAsync(); } catch { /* already rolled back */ }
         }
     }
-}
+}

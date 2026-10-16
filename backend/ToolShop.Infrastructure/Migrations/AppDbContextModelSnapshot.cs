@@ -572,6 +572,64 @@ namespace ToolShop.Infrastructure.Migrations
                     b.ToTable("ExpenseCategories");
                 });
 
+            modelBuilder.Entity("ToolShop.Domain.Entities.Idempotency.IdempotencyRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("ResultEntityId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResultEntityType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("Scope", "UserId", "Key")
+                        .IsUnique()
+                        .HasDatabaseName("IX_IdempotencyRecords_Scope_UserId_Key");
+
+                    b.ToTable("IdempotencyRecords", t =>
+                        {
+                            t.HasCheckConstraint("CK_IdempotencyRecords_Key", "char_length(\"Key\") BETWEEN 16 AND 64");
+
+                            t.HasCheckConstraint("CK_IdempotencyRecords_RequestHash", "char_length(\"RequestHash\") = 64");
+                        });
+                });
+
             modelBuilder.Entity("ToolShop.Domain.Entities.Inventory.InventoryMovement", b =>
                 {
                     b.Property<int>("Id")

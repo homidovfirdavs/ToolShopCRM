@@ -1,4 +1,5 @@
 import apiClient from "./client";
+import { isUncertainOutcome } from "../lib/apiError";
 import type { PagedResult } from "./catalog";
 
 export type PaymentMethod = "Cash" | "Card" | "BankTransfer" | "QR" | "Other";
@@ -91,21 +92,41 @@ export async function getPayment(id: number): Promise<Payment> {
   return res.data;
 }
 
+/** Waits between automatic re-sends after an uncertain outcome (see createPayment). */
+export const PAYMENT_RETRY_DELAYS_MS = [500, 1500];
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Records a payment. `idempotencyKey` identifies ONE user intention (make it when the form opens, not per attempt): the server
+ * stores the payment once per key, so re-sending the same request is always safe. That is why a request with an uncertain
+ * outcome (no answer, timeout, 5xx) is re-sent automatically with the SAME key; the server then either returns the payment it
+ * already stored or records it now. Definite answers (2xx, 4xx) are never re-sent.
+ */
 export async function createPayment(
   orderId: number,
   amount: number,
   method: PaymentMethod,
   referenceNumber: string,
-  notes: string
+  notes: string,
+  idempotencyKey: string,
+  options: { retryDelaysMs?: number[] } = {}
 ): Promise<Payment> {
-  const res = await apiClient.post("/payments", {
-    orderId,
-    amount,
-    method,
-    referenceNumber,
-    notes,
-  });
-  return res.data;
+  const delays = options.retryDelaysMs ?? PAYMENT_RETRY_DELAYS_MS;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await apiClient.post(
+        "/payments",
+        { orderId, amount, method, referenceNumber, notes },
+        { headers: { "Idempotency-Key": idempotencyKey } }
+      );
+      return res.data;
+    } catch (err) {
+      if (!isUncertainOutcome(err) || attempt >= delays.length) throw err;
+      await sleep(delays[attempt]);
+    }
+  }
 }
 
 export async function voidPayment(id: number, reason: string) {

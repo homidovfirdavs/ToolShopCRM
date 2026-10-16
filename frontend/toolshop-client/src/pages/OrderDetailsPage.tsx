@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { OrderStatus } from "../api/orders";
 import { getOrder, returnOrder, type ReturnLineInput } from "../api/orders";
@@ -12,7 +12,8 @@ import {
 import { usePermissions } from "../auth/usePermissions";
 import { useI18n } from "../i18n/useI18n";
 import { useAsyncData } from "../lib/useAsyncData";
-import { errorCode, errorMessage } from "../lib/apiError";
+import { errorCode, errorMessage, isUncertainOutcome } from "../lib/apiError";
+import { newIdempotencyKey } from "../lib/idempotency";
 import { formatDateTime, formatMoney, formatNumber } from "../lib/format";
 import PageHeader from "../components/ui/PageHeader";
 import Card from "../components/ui/Card";
@@ -87,6 +88,8 @@ export default function OrderDetailsPage() {
   const [reference, setReference] = useState("");
   const [modalError, setModalError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Idempotency key of the payment being entered: one per user intention (made when the form opens, kept while the outcome is unknown).
+  const paymentKey = useRef("");
 
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnReason, setReturnReason] = useState("");
@@ -104,6 +107,7 @@ export default function OrderDetailsPage() {
     setMethod("Cash");
     setReference("");
     setModalError(null);
+    paymentKey.current = newIdempotencyKey();
     setModalOpen(true);
   }
 
@@ -115,14 +119,27 @@ export default function OrderDetailsPage() {
     if (!value || value <= 0) return setModalError(t("ord.amountInvalid"));
     if (value > outstanding) return setModalError(t("ord.amountTooBig"));
 
+    if (!paymentKey.current) paymentKey.current = newIdempotencyKey();
     setSaving(true);
     try {
-      await createPayment(order.id, value, method, reference.trim(), "");
+      await createPayment(order.id, value, method, reference.trim(), "", paymentKey.current);
+      paymentKey.current = "";
       toast.success(t("ord.paymentSaved"));
       setModalOpen(false);
       reload();
     } catch (err) {
-      setModalError(errorMessage(err) ?? t("ord.paymentFailed"));
+      if (isUncertainOutcome(err)) {
+        // No answer / server error: the payment may already be saved. KEEP the key - pressing Save again cannot double-book.
+        setModalError(t("ord.paymentUncertain"));
+      } else {
+        // A definite answer: the next try is a new intention.
+        paymentKey.current = newIdempotencyKey();
+        setModalError(
+          errorCode(err) === "IDEMPOTENCY_KEY_REUSED"
+            ? t("ord.err.IDEMPOTENCY_KEY_REUSED")
+            : (errorMessage(err) ?? t("ord.paymentFailed")),
+        );
+      }
     } finally {
       setSaving(false);
     }

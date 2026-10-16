@@ -8,6 +8,7 @@ import { renderApp, T } from "./utils";
 const getOrder = vi.fn();
 const returnOrder = vi.fn();
 const getOrderPayments = vi.fn();
+const createPayment = vi.fn();
 let roles: string[] = ["Admin"];
 let accessToken: string | null = null;
 
@@ -17,7 +18,7 @@ vi.mock("../api/orders", () => ({
 }));
 vi.mock("../api/payments", () => ({
   getOrderPayments: (...a: unknown[]) => getOrderPayments(...a),
-  createPayment: vi.fn(),
+  createPayment: (...a: unknown[]) => createPayment(...a),
 }));
 vi.mock("../context/AuthContext", () => ({
   useAuth: () => ({ user: { id: "1", username: "u", fullName: "U", email: "u@x", roles }, accessToken }),
@@ -247,5 +248,121 @@ describe("OrderDetailsPage - returns", () => {
     renderPage();
     await screen.findByText("Drill X");
     expect(screen.queryByRole("button", { name: T("ord.return") })).not.toBeInTheDocument();
+  });
+});
+
+describe("OrderDetailsPage - payment idempotency key", () => {
+  const KEY_FORMAT = /^[A-Za-z0-9_-]{16,64}$/;
+  const unpaid = () => summary({ totalPaid: 0, outstandingBalance: 400, paymentState: "Unpaid" });
+  const uncertain = () => ({ isAxiosError: true, code: "ERR_NETWORK", message: "Network Error" });
+  const keyOf = (call: number) => createPayment.mock.calls[call][5] as string;
+
+  beforeEach(() => {
+    roles = ["Admin"];
+    accessToken = null;
+    getOrder.mockReset();
+    getOrderPayments.mockReset();
+    createPayment.mockReset();
+    getOrder.mockResolvedValue(order());
+    getOrderPayments.mockResolvedValue(unpaid());
+  });
+
+  async function openAndSave(ev: ReturnType<typeof userEvent.setup>) {
+    const dialog = screen.getByRole("dialog");
+    await ev.click(within(dialog).getByRole("button", { name: T("common.save") }));
+    return dialog;
+  }
+
+  it("sends one valid key with the payment", async () => {
+    const ev = userEvent.setup();
+    createPayment.mockResolvedValue({ id: 1 });
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    await openAndSave(ev);
+
+    await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(1));
+    expect(createPayment).toHaveBeenCalledWith(5, 400, "Cash", "", "", expect.stringMatching(KEY_FORMAT));
+  });
+
+  it("KEEPS the key after an uncertain outcome, so pressing Save again cannot double-book", async () => {
+    const ev = userEvent.setup();
+    createPayment.mockRejectedValueOnce(uncertain()).mockResolvedValueOnce({ id: 1 });
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    const dialog = await openAndSave(ev);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(T("ord.paymentUncertain"));
+
+    await ev.click(within(dialog).getByRole("button", { name: T("common.save") }));
+    await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(2));
+
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it("makes a NEW key after a definite refusal, so a corrected payment is a new intention", async () => {
+    const ev = userEvent.setup();
+    createPayment
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { message: "Payment exceeds outstanding balance." } } })
+      .mockResolvedValueOnce({ id: 1 });
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    const dialog = await openAndSave(ev);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Payment exceeds outstanding balance.");
+
+    await ev.click(within(dialog).getByRole("button", { name: T("common.save") }));
+    await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(2));
+
+    expect(keyOf(1)).toMatch(KEY_FORMAT);
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("shows a translated message when the server says the key was used for a different payment, and starts a new key", async () => {
+    const ev = userEvent.setup();
+    createPayment
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { code: "IDEMPOTENCY_KEY_REUSED", message: "x" } } })
+      .mockResolvedValueOnce({ id: 1 });
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    const dialog = await openAndSave(ev);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(T("ord.err.IDEMPOTENCY_KEY_REUSED"));
+
+    await ev.click(within(dialog).getByRole("button", { name: T("common.save") }));
+    await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("every time the form is opened is a new intention with its own key", async () => {
+    const ev = userEvent.setup();
+    createPayment.mockResolvedValue({ id: 1 });
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    await openAndSave(ev);
+    await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    await openAndSave(ev);
+    await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(2));
+
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("a double click on Save sends one request", async () => {
+    const ev = userEvent.setup();
+    let release: (v: unknown) => void = () => {};
+    createPayment.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    renderPage();
+
+    await ev.click(await screen.findByRole("button", { name: `+ ${T("ord.addPayment")}` }));
+    const dialog = screen.getByRole("dialog");
+    const save = within(dialog).getByRole("button", { name: T("common.save") });
+    await ev.dblClick(save);
+
+    expect(createPayment).toHaveBeenCalledTimes(1);
+    release({ id: 1 });
   });
 });

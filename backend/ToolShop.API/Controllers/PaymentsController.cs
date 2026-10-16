@@ -157,28 +157,70 @@ public class PaymentsController : ControllerBase
         return Ok(await ToResponseAsync(payment, payment.Order));
     }
 
+    private const string IdempotencyKeyHeader = "Idempotency-Key";
+    private const string ReplayHeader = "Idempotent-Replay";
+
+    private static readonly System.Text.RegularExpressions.Regex IdempotencyKeyFormat =
+        new("^[A-Za-z0-9_-]{16,64}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Records a payment once per Idempotency-Key header (a client-generated id for one user intention, 16-64 chars of
+    /// A-Z a-z 0-9 _ -). The same key with the same request returns the first payment again (HTTP 201 plus header
+    /// "Idempotent-Replay: true", nothing new is written or audited); the same key with a different request is 409.
+    /// </summary>
     [HttpPost]
     [Authorize(Roles = "Admin,Manager,Cashier")]
     public async Task<IActionResult> Create([FromBody] CreatePaymentRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
+        var key = Request.Headers[IdempotencyKeyHeader].ToString().Trim();
+        if (string.IsNullOrEmpty(key))
+        {
+            return BadRequest(new
+            {
+                code = "IDEMPOTENCY_KEY_REQUIRED",
+                message = "The Idempotency-Key header is required for payments."
+            });
+        }
+
+        if (!IdempotencyKeyFormat.IsMatch(key))
+        {
+            return BadRequest(new
+            {
+                code = "IDEMPOTENCY_KEY_INVALID",
+                message = "The Idempotency-Key must be 16-64 characters: letters, digits, '-' or '_'."
+            });
+        }
+
         try
         {
-            var payment = await _paymentService.CreateAsync(
+            var result = await _paymentService.CreateAsync(
                 request.OrderId, request.Amount, request.Method,
-                request.ReferenceNumber, request.Notes, CurrentUserId!);
+                request.ReferenceNumber, request.Notes, CurrentUserId!, key);
+            var payment = result.Payment;
 
             var order = await _db.Orders.AsNoTracking().FirstAsync(o => o.Id == payment.OrderId);
 
-            await _auditService.LogAsync(CurrentUserId, "Payment.Create", "Payment", payment.Id.ToString(),
-                $"Payment {payment.PaymentNumber} of {payment.Amount} ({payment.Method}) received for order {order.OrderNumber}.");
+            if (result.Replayed)
+            {
+                Response.Headers[ReplayHeader] = "true";
+            }
+            else
+            {
+                await _auditService.LogAsync(CurrentUserId, "Payment.Create", "Payment", payment.Id.ToString(),
+                    $"Payment {payment.PaymentNumber} of {payment.Amount} ({payment.Method}) received for order {order.OrderNumber}.");
+            }
 
             return CreatedAtAction(nameof(GetById), new { id = payment.Id }, await ToResponseAsync(payment, order));
         }
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Order not found." });
+        }
+        catch (IdempotencyKeyReusedException ex)
+        {
+            return Conflict(new { code = "IDEMPOTENCY_KEY_REUSED", message = ex.Message });
         }
         catch (OrderNotEligibleForPaymentException ex)
         {

@@ -6,6 +6,7 @@ using ToolShop.Domain.Entities.Customers;
 using ToolShop.Domain.Entities.Inventory;
 using ToolShop.Domain.Entities.Purchases;
 using ToolShop.Domain.Entities.Sales;
+using ToolShop.Domain.Entities.Idempotency;
 using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Finance;
 namespace ToolShop.Infrastructure.Persistence;
@@ -34,6 +35,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<OrderReturn> OrderReturns => Set<OrderReturn>();
     public DbSet<OrderReturnItem> OrderReturnItems => Set<OrderReturnItem>();
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
     public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
     public DbSet<Expense> Expenses => Set<Expense>();
@@ -270,6 +272,28 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
         // TASK C1 - returns ledger: immutable history of returns, accounted in the period of the return.
         // Everything is Restrict (history is never cascaded away); numbers come from return_number_seq.
+        // Idempotency keys of money operations (payments now; sales and returns later). Written in the same transaction as
+        // the operation. No foreign key on purpose: the table is generic (ResultEntityType + ResultEntityId).
+        builder.Entity<IdempotencyRecord>(entity =>
+        {
+            entity.Property(r => r.Scope).HasMaxLength(50).IsRequired();
+            entity.Property(r => r.UserId).HasMaxLength(450).IsRequired();
+            entity.Property(r => r.Key).HasMaxLength(64).IsRequired();
+            entity.Property(r => r.RequestHash).HasMaxLength(64).IsRequired();
+            entity.Property(r => r.ResultEntityType).HasMaxLength(50).IsRequired();
+
+            entity.HasIndex(r => new { r.Scope, r.UserId, r.Key })
+                .IsUnique()
+                .HasDatabaseName("IX_IdempotencyRecords_Scope_UserId_Key");
+            entity.HasIndex(r => r.ExpiresAt);
+
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_IdempotencyRecords_RequestHash", "char_length(\"RequestHash\") = 64");
+                t.HasCheckConstraint("CK_IdempotencyRecords_Key", "char_length(\"Key\") BETWEEN 16 AND 64");
+            });
+        });
+
         builder.HasSequence<long>("return_number_seq");
 
         builder.Entity<OrderReturn>(entity =>
@@ -334,4 +358,4 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // Identity table-ҳо (AspNetUsers, AspNetRoles, ...) худкор
         // тавассути IdentityDbContext сохта мешаванд.
     }
-}
+}

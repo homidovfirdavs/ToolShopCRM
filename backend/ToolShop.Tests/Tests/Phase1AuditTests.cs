@@ -91,17 +91,16 @@ public class Phase1AuditTests(ApiFactory factory) : TestBase(factory)
     }
 
     [Fact]
-    public async Task Today_identical_payment_sent_twice_is_accepted_twice_no_idempotency_key()
+    public async Task F1_two_separate_payments_with_different_keys_are_both_recorded()
     {
-        // Documents a gap (not a failure of an existing rule): a client retry after a lost response records a second payment
-        // as long as the order still has an outstanding balance.
+        // Idempotency protects ONE user intention (one key). Two intentions (two keys) are two payments, as long as the order
+        // still has an outstanding balance. Retrying the SAME intention is covered by IdempotentPaymentTests.
         var product = await SeedProductAsync(salePrice: 100m, stock: 10);
         var customer = await SeedCustomerAsync();
         var (id, _) = await CreateCompletedCreditOrderAsync(customer, product, 8); // 800 owed
 
         await (await PayAsync(id, 300m)).ShouldBeAsync(HttpStatusCode.Created);
-        var second = await PayAsync(id, 300m);
-        Assert.True(Ok(second), "Today a duplicate identical payment is accepted (no idempotency key).");
+        await (await PayAsync(id, 300m)).ShouldBeAsync(HttpStatusCode.Created);
         Assert.Equal(600m, await PaidSumAsync(id));
     }
 
