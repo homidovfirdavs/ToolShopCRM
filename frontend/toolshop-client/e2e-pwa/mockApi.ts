@@ -41,8 +41,13 @@ const productNames: [string, string, number, number, string, string][] = [
   ["Angle Grinder 125 mm", "MAK-AG125", 180, 260, "Power Tools", "Makita"],
   ["Tape Measure 5 m", "STN-TM5", 14, 25, "Hand Tools", "Stanley"],
 ];
+/** EAN-13 with a correct check digit, so the camera scanner test can really decode it. */
+function ean13(first12: string): string {
+  const sum = [...first12].reduce((acc, ch, i) => acc + Number(ch) * (i % 2 ? 3 : 1), 0);
+  return first12 + String((10 - (sum % 10)) % 10);
+}
 const products = productNames.map(([name, sku, purchasePrice, salePrice, categoryName, brandName], i) => ({
-  id: i + 1, name, sku, barcode: `46001${String(i).padStart(7, "0")}`, categoryName, brandName, purchasePrice, salePrice, isActive: true,
+  id: i + 1, name, sku, barcode: ean13(`46001${String(i).padStart(7, "0")}`), categoryName, brandName, purchasePrice, salePrice, isActive: true,
 }));
 
 const stock = products.map((p, i) => ({
@@ -116,7 +121,15 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<ApiLo
     switch (true) {
       case path === "/categories": return json(route, categories);
       case path === "/brands": return json(route, brands);
-      case path === "/products": return json(route, { ...paged(products), pageSize: 24 });
+      case path === "/products": {
+        const q = (url.searchParams.get("search") ?? "").trim().toLowerCase();
+        const found = q ? products.filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode.includes(q)) : products;
+        return json(route, { ...paged(found), pageSize: 24 });
+      }
+      case /^\/inventory\/stock\/\d+$/.test(path): {
+        const item = stock.find((s) => s.productId === Number(path.split("/").pop()));
+        return item ? json(route, item) : json(route, { message: "Product not found." }, 404);
+      }
       case path === "/customers": return json(route, paged(customers));
       case path === "/orders": return json(route, paged(orders));
       case path === "/inventory/stock": return json(route, paged(stock));

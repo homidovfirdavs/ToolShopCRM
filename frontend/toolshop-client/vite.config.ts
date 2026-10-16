@@ -2,6 +2,25 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+// LAN HTTPS for testing the camera barcode scanner on a real phone (npm run dev:lan).
+// Browsers open the camera only on HTTPS or localhost, so http://192.168.x.x:5173 does NOT work from a phone.
+// The certificate is made once on the developer PC with mkcert (see docs/PHONE-SCANNER-TEST.tj.md); the files live in
+// ".certs/" which is git-ignored, so no key is ever committed. Without those files nothing here changes.
+const certDir = fileURLToPath(new URL('./.certs/', import.meta.url))
+const lanCert = certDir + 'lan.pem'
+const lanKey = certDir + 'lan-key.pem'
+const lanHttps = fs.existsSync(lanCert) && fs.existsSync(lanKey)
+  ? { cert: fs.readFileSync(lanCert), key: fs.readFileSync(lanKey) }
+  : undefined
+
+// One origin for the app AND the API: /api is forwarded to the local backend (no CORS, no mixed content).
+const localApiProxy = {
+  '/api': { target: 'http://localhost:5252', changeOrigin: false },
+  '/health': { target: 'http://localhost:5252', changeOrigin: false },
+}
 
 // PWA: the service worker precaches ONLY the static app shell (built JS/CSS/HTML/icons).
 // It has no runtime caching rules at all, so API responses (orders, payments, finance,
@@ -10,7 +29,17 @@ import { VitePWA } from 'vite-plugin-pwa'
 // CI / release scripts can set APP_BUILD_ID; otherwise it is the build time (UTC, minutes).
 const APP_BUILD = process.env.APP_BUILD_ID ?? new Date().toISOString().slice(0, 16).replace('T', ' ')
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  if (mode === 'lan' && !lanHttps) {
+    throw new Error('npm run dev:lan needs .certs/lan.pem and .certs/lan-key.pem (create them with mkcert, see docs/PHONE-SCANNER-TEST.tj.md).')
+  }
+  // The phone reaches the API through the SAME https origin (/api is proxied below), never through http://localhost.
+  if (mode === 'lan') process.env.VITE_API_URL ??= '/api'
+  // "lanhttp": plain HTTP on the LAN, only for a phone whose Chrome flag "unsafely-treat-insecure-origin-as-secure"
+  // lists this PC's address (fallback when the mkcert CA can not be installed on the phone). Same /api proxy, no certificate.
+  // It also accepts a temporary Cloudflare quick tunnel (*.trycloudflare.com) that gives the phone real HTTPS.
+  if (mode === 'lanhttp') process.env.VITE_API_URL ??= '/api'
+  return {
   define: { __APP_BUILD__: JSON.stringify(APP_BUILD) },
   plugins: [
     react(),
@@ -63,9 +92,13 @@ export default defineConfig({
   // so a single tunnel is enough and no CORS setting is needed. Real deployments use a reverse proxy instead.
   preview: {
     allowedHosts: ['localhost', '.trycloudflare.com', '.ngrok-free.app', '.ngrok-free.dev', '.loca.lt'],
-    proxy: {
-      '/api': { target: 'http://localhost:5252', changeOrigin: false },
-      '/health': { target: 'http://localhost:5252', changeOrigin: false },
-    },
+    proxy: localApiProxy,
   },
+  // Dev server: listens on the network ONLY in "lan" mode (and only when the certificate exists).
+  server: mode === 'lan'
+    ? { host: true, port: 5173, strictPort: true, https: lanHttps, proxy: localApiProxy }
+    : mode === 'lanhttp'
+      ? { host: true, port: 5173, strictPort: true, proxy: localApiProxy, allowedHosts: ['.trycloudflare.com'] }
+      : {},
+  }
 })
