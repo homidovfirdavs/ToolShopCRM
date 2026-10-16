@@ -68,10 +68,12 @@ public class ReturnTests(ApiFactory factory) : TestBase(factory)
 
         Assert.Equal(10, await StockAsync(product));                  // stock is back
         Assert.Equal(movementsBefore + 1, await MovementCountAsync()); // exactly one SaleReturn line
-        Assert.Equal(0m, await PaidSumAsync(id));                      // no valid payment left
-        var refunded = await Factory.WithDbAsync(db =>
-            db.Payments.CountAsync(p => p.OrderId == id && p.Status == PaymentStatus.Refunded));
-        Assert.Equal(1, refunded);                                      // kept for history, not deleted
+        // C2: payments are NOT flipped any more - the refund is a ledger row, the payment keeps its history.
+        Assert.Equal(total, await PaidSumAsync(id));
+        var ledger = await Factory.WithDbAsync(db => db.OrderReturns.SingleAsync(r => r.OrderId == id));
+        Assert.Equal(total, ledger.GoodsValue);
+        Assert.Equal(total, ledger.RefundAmount);
+        Assert.Equal(PaymentMethod.Cash, ledger.RefundMethod);
         var returnMovements = await Factory.WithDbAsync(db =>
             db.InventoryMovements.CountAsync(m => m.ReferenceId == id && m.MovementType == InventoryMovementType.SaleReturn));
         Assert.Equal(1, returnMovements);
@@ -98,7 +100,7 @@ public class ReturnTests(ApiFactory factory) : TestBase(factory)
         Assert.Equal(0m, after.Dec("revenue"));
         Assert.Equal(0m, after.Dec("cogs"));
         Assert.Equal(0m, after.Dec("accountsReceivable"));
-        Assert.Equal(0m, after.Dec("paymentsReceived"));
+        // paymentsReceived (payments minus refunds of the period) is reworked in C3 - not asserted in C2.
         Assert.Equal(0, after.Int("completedOrdersCount"));
 
         var dash = await Admin.GetAsync("/api/dashboard/summary");
@@ -124,7 +126,8 @@ public class ReturnTests(ApiFactory factory) : TestBase(factory)
 
         await (await ReturnOrderAsync(id)).ShouldBeAsync(HttpStatusCode.OK);
         Assert.Equal(5, await StockAsync(product));
-        Assert.Equal(0m, await PaidSumAsync(id));
+        var ledger = await Factory.WithDbAsync(db => db.OrderReturns.SingleAsync(r => r.OrderId == id));
+        Assert.Equal(total, ledger.RefundAmount);   // walk-in was fully paid -> fully refunded
     }
 
     [Fact]

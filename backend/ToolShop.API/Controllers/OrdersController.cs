@@ -41,31 +41,42 @@ public class OrdersController : ControllerBase
             .Select(u => new { u.Id, u.UserName }).ToListAsync();
         var userLookup = users.ToDictionary(u => u.Id, u => u.UserName ?? "Unknown");
 
-        DateTime? returnedAt = null;
-        string? returnedBy = null;
-        string? returnReason = null;
-        decimal? refundedAmount = null;
+        // Returns come from the immutable ledger (OrderReturns): every return has its own date, user, reason and refund.
+        var returnRows = o.Status is OrderStatus.Returned or OrderStatus.PartiallyReturned
+            ? await _db.OrderReturns.AsNoTracking()
+                .Include(r => r.Items)
+                .Where(r => r.OrderId == o.Id)
+                .OrderBy(r => r.ReturnedAt).ThenBy(r => r.Id)
+                .ToListAsync()
+            : new List<OrderReturn>();
 
-        if (o.Status == OrderStatus.Returned)
+        var returnUserIds = returnRows.Select(r => r.ReturnedByUserId).Distinct().ToList();
+        var returnUsers = await _db.Users.Where(u => returnUserIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.UserName }).ToListAsync();
+        var returnUserLookup = returnUsers.ToDictionary(u => u.Id, u => u.UserName ?? "Unknown");
+
+        var returns = returnRows.Select(r => new OrderReturnResponse
         {
-            var ret = await _db.InventoryMovements.AsNoTracking()
-                .Where(m => m.ReferenceType == "Order" && m.ReferenceId == o.Id
-                            && m.MovementType == Domain.Entities.Inventory.InventoryMovementType.SaleReturn)
-                .OrderBy(m => m.CreatedAt)
-                .FirstOrDefaultAsync();
-
-            if (ret is not null)
+            Id = r.Id,
+            ReturnNumber = r.ReturnNumber,
+            ReturnedAt = r.ReturnedAt,
+            ReturnedByUsername = returnUserLookup.GetValueOrDefault(r.ReturnedByUserId, "Unknown"),
+            Reason = r.Reason,
+            GoodsValue = r.GoodsValue,
+            RefundAmount = r.RefundAmount,
+            RefundMethod = r.RefundMethod,
+            Items = r.Items.Select(ri => new OrderReturnItemResponse
             {
-                returnedAt = ret.CreatedAt;
-                returnReason = ret.Notes;
-                returnedBy = await _db.Users.Where(u => u.Id == ret.CreatedByUserId)
-                    .Select(u => u.UserName).FirstOrDefaultAsync() ?? "Unknown";
-            }
-
-            refundedAmount = await _db.Payments.AsNoTracking()
-                .Where(p => p.OrderId == o.Id && p.Status == Domain.Entities.Payments.PaymentStatus.Refunded)
-                .SumAsync(p => (decimal?)p.Amount) ?? 0m;
-        }
+                OrderItemId = ri.OrderItemId,
+                ProductId = ri.ProductId,
+                ProductName = o.Items.FirstOrDefault(i => i.Id == ri.OrderItemId)?.Product.Name ?? string.Empty,
+                Quantity = ri.Quantity,
+                RestockedQuantity = ri.RestockedQuantity,
+                WrittenOffQuantity = ri.WrittenOffQuantity,
+                NetValue = ri.NetValue
+            }).ToList()
+        }).ToList();
+        var lastReturn = returns.LastOrDefault();
 
         return new OrderResponse
         {
@@ -98,10 +109,12 @@ public class OrdersController : ControllerBase
             CreatedAt = o.CreatedAt,
             CompletedAt = o.CompletedAt,
             CancelledAt = o.CancelledAt,
-            ReturnedAt = returnedAt,
-            ReturnedByUsername = returnedBy,
-            ReturnReason = returnReason,
-            RefundedAmount = refundedAmount
+            ReturnedAt = lastReturn?.ReturnedAt,
+            ReturnedByUsername = lastReturn?.ReturnedByUsername,
+            ReturnReason = lastReturn?.Reason,
+            RefundedAmount = returns.Count > 0 ? returns.Sum(r => r.RefundAmount) : null,
+            ReturnedValue = returns.Sum(r => r.GoodsValue),
+            Returns = returns
         };
     }
 
@@ -442,8 +455,8 @@ public class OrdersController : ControllerBase
     }
 
     /// <summary>
-    /// Full return of a completed order (Admin/Manager via Sales.Return). Stock goes back through a SaleReturn
-    /// movement and every valid payment is marked Refunded. Partial returns are not supported.
+    /// Return goods of a sold order, whole or in part (Admin/Manager via Sales.Return). Each call is one immutable
+    /// return operation dated now; only sellable units go back to stock; the refund is recorded as money paid back.
     /// </summary>
     [HttpPost("{id:int}/return")]
     [Authorize(Policy = Permissions.SalesReturn)]
@@ -453,10 +466,19 @@ public class OrdersController : ControllerBase
 
         try
         {
-            var result = await _orderService.ReturnAsync(id, CurrentUserId!, request.Reason);
+            var input = new ReturnInput(
+                request.Reason,
+                request.Items?.Select(i => new ReturnLineInput(i.OrderItemId, i.Quantity, i.DamagedQuantity)).ToList(),
+                request.RefundMethod,
+                request.RefundAmount);
+
+            var result = await _orderService.ReturnAsync(id, CurrentUserId!, input);
+            var ret = result.Return;
 
             await _auditService.LogAsync(CurrentUserId, "Order.Return", "Order", id.ToString(),
-                $"Order {result.Order.OrderNumber} returned in full. Items: {result.ItemCount}, refunded: {result.RefundedAmount}. Reason: {request.Reason.Trim()}",
+                $"Return {ret.ReturnNumber} on order {result.Order.OrderNumber} ({(result.Order.Status == OrderStatus.Returned ? "order fully returned" : "partial")}). " +
+                $"Lines: {ret.Items.Count}, goods value: {ret.GoodsValue}, restocked: {ret.Items.Sum(i => i.RestockedQuantity)}, written off: {ret.Items.Sum(i => i.WrittenOffQuantity)}, " +
+                $"refunded: {ret.RefundAmount}{(ret.RefundMethod is null ? "" : $" ({ret.RefundMethod})")}. Reason: {request.Reason.Trim()}",
                 ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString());
 
             var returned = await _db.Orders
@@ -475,10 +497,14 @@ public class OrdersController : ControllerBase
         {
             return Conflict(new
             {
-                message = "Only completed orders can be returned.",
+                message = "Only completed or partially returned orders can be returned.",
                 code = "ORDER_NOT_RETURNABLE",
                 status = ex.Status.ToString()
             });
+        }
+        catch (InvalidReturnException ex)
+        {
+            return BadRequest(new { message = ex.Message, code = ex.Code });
         }
     }
 
@@ -493,13 +519,10 @@ public class OrdersController : ControllerBase
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
 
-        var totalPaid = payments.Where(p => p.Status == Domain.Entities.Payments.PaymentStatus.Completed)
-            .Sum(p => p.Amount);
-        var isReturned = order.Status == OrderStatus.Returned;
-        var refundedTotal = payments.Where(p => p.Status == Domain.Entities.Payments.PaymentStatus.Refunded)
-            .Sum(p => p.Amount);
-        // A returned order owes nothing: its payments were refunded and it no longer counts as a sale.
-        var outstanding = isReturned ? 0m : Math.Max(0, order.TotalAmount - totalPaid);
+        // Money position after returns (derived, never stored): see OrderBalance.
+        var balance = await OrderBalance.LoadAsync(_db, order.Id, order.TotalAmount);
+        var totalPaid = balance.Paid;
+        var outstanding = balance.Outstanding;
 
         var userIds = payments.Select(p => p.ReceivedByUserId).Distinct().ToList();
         var users = await _db.Users.Where(u => userIds.Contains(u.Id))
@@ -511,9 +534,10 @@ public class OrdersController : ControllerBase
             orderTotal = order.TotalAmount,
             totalPaid,
             outstandingBalance = outstanding,
-            refundedTotal,
-            paymentState = isReturned ? "Refunded"
-                : totalPaid <= 0 ? "Unpaid" : totalPaid < order.TotalAmount ? "PartiallyPaid" : "Paid",
+            refundedTotal = balance.Refunded,
+            returnedValue = balance.ReturnedValue,
+            paymentState = order.Status == OrderStatus.Returned ? "Refunded"
+                : balance.NetPaid <= 0 ? "Unpaid" : balance.NetPaid < balance.NetTotal ? "PartiallyPaid" : "Paid",
             payments = payments.Select(p => new
             {
                 p.Id,

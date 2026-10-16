@@ -48,10 +48,9 @@ public class PaymentsController : ControllerBase
             .Select(u => new { u.Id, u.UserName }).ToListAsync();
         var userLookup = users.ToDictionary(u => u.Id, u => u.UserName ?? "Unknown");
 
-        var totalPaid = await _db.Payments
-            .Where(x => x.OrderId == order.Id && x.Status == PaymentStatus.Completed)
-            .SumAsync(x => (decimal?)x.Amount) ?? 0;
-        var outstanding = Math.Max(0, order.TotalAmount - totalPaid);
+        var balance = await ToolShop.Infrastructure.Sales.OrderBalance.LoadAsync(_db, order.Id, order.TotalAmount);
+        var totalPaid = balance.Paid;
+        var outstanding = balance.Outstanding;
 
         string customerName = "Walk-in Customer";
         if (order.CustomerId.HasValue)
@@ -225,6 +224,10 @@ public class PaymentsController : ControllerBase
         catch (VoidWouldCreateUnresolvedWalkInDebtException ex)
         {
             return Conflict(new { message = ex.Message });
+        }
+        catch (VoidWouldDropBelowRefundedException ex)
+        {
+            return Conflict(new { message = ex.Message, code = "VOID_BELOW_REFUNDED", refunded = ex.Refunded });
         }
     }
         [HttpGet("~/api/debts")]

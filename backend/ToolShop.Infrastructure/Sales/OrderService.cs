@@ -26,14 +26,26 @@ public class OrderNotReturnableException : Exception
     public OrderStatus Status { get; }
 
     public OrderNotReturnableException(OrderStatus status)
-        : base("Only completed orders can be returned.")
+        : base("Only completed or partially returned orders can be returned.")
     {
         Status = status;
     }
 }
 
-/// <summary>Outcome of a full-order return.</summary>
-public record OrderReturnResult(Order Order, int ItemCount, decimal RefundedAmount);
+/// <summary>A return request that breaks a business rule (bad line, too many units, refund above the limit...).</summary>
+public class InvalidReturnException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
+/// <summary>One line of a return: how many units come back and how many of them are damaged / not sellable.</summary>
+public record ReturnLineInput(int OrderItemId, int Quantity, int DamagedQuantity);
+
+/// <summary>Lines == null/empty means "return everything that is still left" (all units sellable).</summary>
+public record ReturnInput(string Reason, List<ReturnLineInput>? Lines, PaymentMethod? RefundMethod, decimal? RefundAmount);
+
+/// <summary>Outcome of one return operation.</summary>
+public record OrderReturnResult(Order Order, OrderReturn Return, int ItemCount, decimal RefundedAmount);
 
 public class InsufficientStockForSaleException : Exception
 {
@@ -298,13 +310,16 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
     }
 
     /// <summary>
-    /// Returns a COMPLETED order in full (partial returns are not supported). One serializable transaction:
-    ///  - stock: one SaleReturn InventoryMovement per line (stock always comes from movements),
-    ///  - money: every valid (Completed) payment of the order becomes Refunded (kept for history, never deleted),
-    ///  - order: Completed -> Returned. CostAtSale, prices and discounts are NOT touched.
-    /// A Returned order drops out of revenue, COGS, receivables and debts because all of them only count Completed orders.
+    /// Returns goods of a sold order - the whole order or only some lines/units (TASK C2). One serializable transaction:
+    ///  - ledger: one immutable OrderReturn (+ items) dated NOW (UTC). Revenue is reduced in THIS period, the sale stays where it was,
+    ///  - stock: a SaleReturn movement only for the RESTOCKED (sellable) units; damaged units never go back to stock,
+    ///  - money: nothing is edited or flipped - the refund is a number on the return, payments keep their history,
+    ///  - order: Completed -> PartiallyReturned -> Returned (when no unit is left).
+    /// Returned value = line value after the pro-rata order-discount allocation; the LAST return of a line (and of the order)
+    /// takes the rounding remainder, so all returns together add up to exactly what was sold.
+    /// Refund = money actually paid back; limited to what the customer overpaid; defaults to that limit.
     /// </summary>
-    public async Task<OrderReturnResult> ReturnAsync(int orderId, string userId, string reason)
+    public async Task<OrderReturnResult> ReturnAsync(int orderId, string userId, ReturnInput input)
     {
         const int maxRetries = 3;
 
@@ -325,51 +340,167 @@ public async Task<Order> CompleteAsync(int orderId, string userId, InitialPaymen
                     throw new KeyNotFoundException("Order not found.");
                 }
 
-                if (order.Status != OrderStatus.Completed)
+                if (order.Status != OrderStatus.Completed && order.Status != OrderStatus.PartiallyReturned)
                 {
                     throw new OrderNotReturnableException(order.Status);
                 }
 
                 var now = DateTime.UtcNow;
-                var trimmedReason = reason.Trim();
+                var reason = input.Reason.Trim();
 
-                foreach (var item in order.Items)
+                // ---- what was already returned (ledger) ----
+                var priorItems = await _db.OrderReturnItems.AsNoTracking()
+                    .Where(i => i.OrderReturn.OrderId == orderId)
+                    .Select(i => new { i.OrderItemId, i.Quantity, i.NetValue })
+                    .ToListAsync();
+                var returnedQty = priorItems.GroupBy(i => i.OrderItemId).ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
+                var returnedNet = priorItems.GroupBy(i => i.OrderItemId).ToDictionary(g => g.Key, g => g.Sum(i => i.NetValue));
+                var balanceBefore = await OrderBalance.LoadAsync(_db, order.Id, order.TotalAmount);
+
+                // ---- requested lines ----
+                var lines = input.Lines is { Count: > 0 }
+                    ? input.Lines
+                    : order.Items
+                        .Where(i => i.Quantity - returnedQty.GetValueOrDefault(i.Id) > 0)
+                        .Select(i => new ReturnLineInput(i.Id, i.Quantity - returnedQty.GetValueOrDefault(i.Id), 0))
+                        .ToList();
+
+                if (lines.Count == 0)
+                {
+                    throw new InvalidReturnException("NOTHING_TO_RETURN", "There is nothing left to return on this order.");
+                }
+
+                if (lines.GroupBy(l => l.OrderItemId).Any(g => g.Count() > 1))
+                {
+                    throw new InvalidReturnException("DUPLICATE_LINE", "Each order line may appear only once in a return.");
+                }
+
+                var ledger = new OrderReturn
+                {
+                    ReturnNumber = await ReturnNumberGenerator.GenerateAsync(_db),
+                    OrderId = order.Id,
+                    ReturnedAt = now,
+                    ReturnedByUserId = userId,
+                    Reason = reason
+                };
+
+                var thisQty = new Dictionary<int, int>();
+                foreach (var line in lines)
+                {
+                    var item = order.Items.FirstOrDefault(i => i.Id == line.OrderItemId)
+                        ?? throw new InvalidReturnException("INVALID_ITEM", $"Order line {line.OrderItemId} does not belong to this order.");
+
+                    var remaining = item.Quantity - returnedQty.GetValueOrDefault(item.Id);
+                    if (line.Quantity < 1 || line.Quantity > remaining)
+                    {
+                        throw new InvalidReturnException("QUANTITY_EXCEEDS_REMAINING",
+                            $"Line {item.Id}: cannot return {line.Quantity}, only {remaining} unit(s) left.");
+                    }
+
+                    if (line.DamagedQuantity < 0 || line.DamagedQuantity > line.Quantity)
+                    {
+                        throw new InvalidReturnException("INVALID_DAMAGED_QUANTITY",
+                            $"Line {item.Id}: damaged quantity must be between 0 and {line.Quantity}.");
+                    }
+
+                    // Line value after order-discount allocation (pro-rata); the last return of the line takes the remainder.
+                    var lineNet = order.Subtotal > 0
+                        ? Math.Round(item.LineTotal * order.TotalAmount / order.Subtotal, 2, MidpointRounding.AwayFromZero)
+                        : 0m;
+                    var net = line.Quantity == remaining
+                        ? lineNet - returnedNet.GetValueOrDefault(item.Id)
+                        : Math.Round(lineNet * line.Quantity / item.Quantity, 2, MidpointRounding.AwayFromZero);
+
+                    thisQty[item.Id] = line.Quantity;
+                    ledger.Items.Add(new OrderReturnItem
+                    {
+                        OrderItemId = item.Id,
+                        ProductId = item.ProductId,
+                        Quantity = line.Quantity,
+                        RestockedQuantity = line.Quantity - line.DamagedQuantity,
+                        WrittenOffQuantity = line.DamagedQuantity,
+                        NetValue = Math.Max(0m, net),
+                        CostAtSaleSnapshot = item.CostAtSale
+                    });
+                }
+
+                var fullyReturned = order.Items.All(i =>
+                    i.Quantity - returnedQty.GetValueOrDefault(i.Id) - thisQty.GetValueOrDefault(i.Id) == 0);
+
+                // The order is exhausted: all returns together must equal the order total to the cent.
+                if (fullyReturned)
+                {
+                    var diff = (order.TotalAmount - balanceBefore.ReturnedValue) - ledger.Items.Sum(i => i.NetValue);
+                    var last = ledger.Items[^1];
+                    last.NetValue = Math.Max(0m, last.NetValue + diff);
+                }
+
+                ledger.GoodsValue = ledger.Items.Sum(i => i.NetValue);
+
+                // ---- cost: restocked units leave COGS, written-off units stay in COGS (memo only). Unknown cost -> null, never 0 ----
+                decimal? costReversed = 0m, writeOff = 0m;
+                foreach (var i in ledger.Items)
+                {
+                    if (i.RestockedQuantity > 0)
+                    {
+                        costReversed = i.CostAtSaleSnapshot is null || costReversed is null
+                            ? null : costReversed + i.RestockedQuantity * i.CostAtSaleSnapshot;
+                    }
+                    if (i.WrittenOffQuantity > 0)
+                    {
+                        writeOff = i.CostAtSaleSnapshot is null || writeOff is null
+                            ? null : writeOff + i.WrittenOffQuantity * i.CostAtSaleSnapshot;
+                    }
+                }
+                ledger.CostReversed = costReversed;
+                ledger.WriteOffCost = writeOff;
+
+                // ---- refund: limited to what the customer has overpaid after this return ----
+                var overpaid = Math.Max(0m,
+                    balanceBefore.NetPaid - (balanceBefore.NetTotal - ledger.GoodsValue));
+                var refund = Math.Round(input.RefundAmount ?? overpaid, 2, MidpointRounding.AwayFromZero);
+                if (refund < 0 || refund > overpaid)
+                {
+                    throw new InvalidReturnException("REFUND_EXCEEDS_LIMIT",
+                        $"Refund must be between 0 and {overpaid} (what the customer has overpaid).");
+                }
+
+                ledger.RefundAmount = refund;
+                if (refund > 0)
+                {
+                    ledger.RefundMethod = input.RefundMethod
+                        ?? await _db.Payments.AsNoTracking()
+                            .Where(p => p.OrderId == order.Id && p.Status == PaymentStatus.Completed)
+                            .OrderByDescending(p => p.CreatedAt)
+                            .Select(p => (PaymentMethod?)p.Method)
+                            .FirstOrDefaultAsync()
+                        ?? PaymentMethod.Cash;
+                }
+
+                // ---- stock: only sellable units go back ----
+                foreach (var i in ledger.Items.Where(i => i.RestockedQuantity > 0))
                 {
                     _db.InventoryMovements.Add(new InventoryMovement
                     {
-                        ProductId = item.ProductId,
+                        ProductId = i.ProductId,
                         MovementType = InventoryMovementType.SaleReturn,
-                        Quantity = item.Quantity,
+                        Quantity = i.RestockedQuantity,
                         ReferenceType = "Order",
                         ReferenceId = order.Id,
-                        Reason = $"Return {order.OrderNumber}",
-                        Notes = trimmedReason,
+                        Reason = $"Return {order.OrderNumber} ({ledger.ReturnNumber})",
+                        Notes = reason,
                         CreatedByUserId = userId,
                         CreatedAt = now
                     });
                 }
 
-                var validPayments = await _db.Payments
-                    .Where(p => p.OrderId == order.Id && p.Status == PaymentStatus.Completed)
-                    .ToListAsync();
-
-                var refunded = 0m;
-                foreach (var payment in validPayments)
-                {
-                    refunded += payment.Amount;
-                    // For a Refunded payment the Voided* columns record when/who/why the money was given back.
-                    payment.Status = PaymentStatus.Refunded;
-                    payment.VoidedAt = now;
-                    payment.VoidedByUserId = userId;
-                    payment.VoidReason = $"Order returned: {trimmedReason}";
-                }
-
-                order.Status = OrderStatus.Returned;
+                order.Status = fullyReturned ? OrderStatus.Returned : OrderStatus.PartiallyReturned;
+                _db.OrderReturns.Add(ledger);
 
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
 
-                return new OrderReturnResult(order, order.Items.Count, refunded);
+                return new OrderReturnResult(order, ledger, ledger.Items.Count, ledger.RefundAmount);
             }
             catch (Exception ex) when (ToolShop.Infrastructure.Persistence.SerializationFailure.IsRetryable(ex) && attempt < maxRetries)
             {

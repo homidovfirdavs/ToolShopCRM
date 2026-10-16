@@ -262,10 +262,12 @@ public class Phase1AuditTests(ApiFactory factory) : TestBase(factory)
 
         var oldAfter = await (await Admin.GetAsync(Range(-45, -35))).ReadJsonAsync();
         var todayAfter = await (await Admin.GetAsync(Range(-1, 1))).ReadJsonAsync();
+        // C2: the payment is real history now (never flipped to Refunded) -> the old period keeps the cash it received.
+        Assert.Equal(500m, oldAfter.Dec("paymentsReceived"));
+        // STILL the old behaviour until C3 reworks the Finance formulas (revenue by sale period, returns by return period):
         Assert.Equal(0m, oldAfter.Dec("revenue"));            // closed period changed after the fact
-        Assert.Equal(0m, oldAfter.Dec("paymentsReceived"));
         Assert.Equal(0m, todayAfter.Dec("revenue"));          // ... and nothing shows in the period of the return
-        Assert.Equal(0m, todayAfter.Dec("paymentsReceived"));
+        Assert.Equal(0m, todayAfter.Dec("paymentsReceived")); // C3: should become -500 (refund outflow of this period)
         Assert.Equal(10, await StockAsync(product));          // stock itself IS correct
     }
 }

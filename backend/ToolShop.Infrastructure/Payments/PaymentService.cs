@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Sales;
 using ToolShop.Infrastructure.Persistence;
+using ToolShop.Infrastructure.Sales;
 
 namespace ToolShop.Infrastructure.Payments;
 
@@ -24,6 +25,12 @@ public class PaymentAlreadyVoidedException() : Exception("Payment has already be
 public class VoidWouldCreateUnresolvedWalkInDebtException()
     : Exception("Cannot void this payment: it would leave an outstanding balance on a walk-in order with no customer to bill.");
 
+public class VoidWouldDropBelowRefundedException(decimal refunded)
+    : Exception($"Cannot void this payment: the customer has already been refunded {refunded}, which the remaining payments would not cover.")
+{
+    public decimal Refunded { get; } = refunded;
+}
+
 public class PaymentService
 {
     private readonly AppDbContext _db;
@@ -38,12 +45,8 @@ public class PaymentService
         var order = await _db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == orderId);
         if (order is null) return 0;
 
-        var totalPaid = await _db.Payments
-            .AsNoTracking()
-            .Where(p => p.OrderId == orderId && p.Status == PaymentStatus.Completed)
-            .SumAsync(p => (decimal?)p.Amount) ?? 0;
-
-        return Math.Max(0, order.TotalAmount - totalPaid);
+        // After returns: total - returned goods - (paid - refunded). Never stored.
+        return (await OrderBalance.LoadAsync(_db, orderId, order.TotalAmount)).Outstanding;
     }
 
     public async Task<decimal> GetCustomerDebtAsync(int customerId)
@@ -88,17 +91,13 @@ public class PaymentService
                     throw new KeyNotFoundException("Order not found.");
                 }
 
-                if (order.Status != OrderStatus.Completed)
+                if (order.Status != OrderStatus.Completed && order.Status != OrderStatus.PartiallyReturned)
                 {
                     throw new OrderNotEligibleForPaymentException(
                         "Payments can only be recorded against completed orders.");
                 }
 
-                var totalPaidSoFar = await _db.Payments
-                    .Where(p => p.OrderId == orderId && p.Status == PaymentStatus.Completed)
-                    .SumAsync(p => (decimal?)p.Amount) ?? 0;
-
-                var outstanding = Math.Max(0, order.TotalAmount - totalPaidSoFar);
+                var outstanding = (await OrderBalance.LoadAsync(_db, orderId, order.TotalAmount)).Outstanding;
 
                 if (amount > outstanding)
                 {
@@ -176,18 +175,20 @@ public class PaymentService
                     throw new PaymentAlreadyVoidedException();
                 }
 
+                var balance = await OrderBalance.LoadAsync(_db, payment.OrderId, payment.Order.TotalAmount);
+
+                // Money already paid back must stay covered by real payments: voiding below the refunded amount is rejected.
+                if (balance.Paid - payment.Amount < balance.Refunded)
+                {
+                    throw new VoidWouldDropBelowRefundedException(balance.Refunded);
+                }
+
                 // Walk-in safety: voiding must not leave an unresolved debt with no customer.
                 if (payment.Order.CustomerId is null)
                 {
-                    var totalPaidExcludingThis = await _db.Payments
-                        .Where(p => p.OrderId == payment.OrderId &&
-                                    p.Status == PaymentStatus.Completed &&
-                                    p.Id != payment.Id)
-                        .SumAsync(p => (decimal?)p.Amount) ?? 0;
+                    var wouldBeOutstanding = balance with { Paid = balance.Paid - payment.Amount };
 
-                    var wouldBeOutstanding = Math.Max(0, payment.Order.TotalAmount - totalPaidExcludingThis);
-
-                    if (wouldBeOutstanding > 0)
+                    if (wouldBeOutstanding.Outstanding > 0)
                     {
                         throw new VoidWouldCreateUnresolvedWalkInDebtException();
                     }
