@@ -76,7 +76,8 @@ public class ReportsController : ControllerBase
         var rows = await _reportsService.GetSalesReportForExportAsync(
             f, t, customerId, status, cashierUserId, paymentStatus, search);
 
-        var completed = rows.Where(r => r.Status == nameof(OrderStatus.Completed)).ToList();
+        var completed = rows.Where(r => r.Status == nameof(OrderStatus.Completed)
+                                     || r.Status == nameof(OrderStatus.PartiallyReturned)).ToList();
 
         return Ok(new SalesReportSummaryResponse(
             rows.Count,
@@ -126,6 +127,31 @@ public class ReportsController : ControllerBase
         var csvBytes = CsvExportHelper.BuildCsv(headers, csvRows);
         return File(csvBytes, "text/csv", $"sales-report-{f:yyyyMMdd}-{t:yyyyMMdd}.csv");
     }
+
+    // ===================== RETURNS REPORT (by date of the RETURN) =====================
+
+    [HttpGet("returns")]
+    public async Task<ActionResult<ReturnsReportResponse>> GetReturnsReport(
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 20;
+        if (pageSize > 100) pageSize = 100;
+
+        var (f, t) = ResolveRange(from, to);
+        var (items, total, totals) = await _reportsService.GetReturnsReportAsync(f, t, page, pageSize);
+
+        return Ok(new ReturnsReportResponse(
+            items.Select(MapReturnRow).ToList(), page, pageSize, total,
+            (int)Math.Ceiling(total / (double)pageSize),
+            totals.ReturnsCount, totals.GoodsValue, totals.RefundsPaid, totals.CostReversed, totals.WriteOffCost));
+    }
+
+    private static ReturnReportRowResponse MapReturnRow(ReturnReportRowResult r) => new(
+        r.ReturnId, r.ReturnNumber, r.ReturnedAt, r.OrderId, r.OrderNumber, r.CustomerName, r.ReturnedByUserName,
+        r.Reason, r.ReturnedUnits, r.RestockedUnits, r.WrittenOffUnits, r.GoodsValue, r.RefundAmount,
+        r.RefundMethod, r.CostReversed, r.WriteOffCost);
 
     // ===================== INVENTORY REPORT =====================
 

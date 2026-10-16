@@ -100,8 +100,8 @@ public class ReturnTests(ApiFactory factory) : TestBase(factory)
         Assert.Equal(0m, after.Dec("revenue"));
         Assert.Equal(0m, after.Dec("cogs"));
         Assert.Equal(0m, after.Dec("accountsReceivable"));
-        // paymentsReceived (payments minus refunds of the period) is reworked in C3 - not asserted in C2.
-        Assert.Equal(0, after.Int("completedOrdersCount"));
+        Assert.Equal(0m, after.Dec("paymentsReceived"));   // 200 received - 200 refunded in the same period
+        Assert.Equal(1, after.Int("completedOrdersCount")); // the sale itself still happened (it is a count of sales made)
 
         var dash = await Admin.GetAsync("/api/dashboard/summary");
         await dash.ShouldBeAsync(HttpStatusCode.OK);

@@ -235,10 +235,9 @@ public class Phase1AuditTests(ApiFactory factory) : TestBase(factory)
     // =================== F10: return / refund impact ===================
 
     [Fact]
-    public async Task Today_return_removes_the_sale_from_its_ORIGINAL_period_and_records_no_refund_outflow()
+    public async Task Return_is_booked_in_the_period_of_the_RETURN_and_the_sale_stays_in_its_own_period()
     {
-        // Characterisation of current behaviour (passes today). It shows the design gap: there is no ReturnedAt, so a
-        // return rewrites the period of the original sale instead of appearing in the period of the return.
+        // F10 fixed by variant C (C2 ledger + C3 formulas): a return no longer rewrites the period of the original sale.
         var product = await SeedProductAsync(salePrice: 100m, purchasePrice: 60m, stock: 10);
         var customer = await SeedCustomerAsync();
         var (id, total) = await CreateOrderAsync(customer, 0m, Item(product, 5));
@@ -262,12 +261,12 @@ public class Phase1AuditTests(ApiFactory factory) : TestBase(factory)
 
         var oldAfter = await (await Admin.GetAsync(Range(-45, -35))).ReadJsonAsync();
         var todayAfter = await (await Admin.GetAsync(Range(-1, 1))).ReadJsonAsync();
-        // C2: the payment is real history now (never flipped to Refunded) -> the old period keeps the cash it received.
+        Assert.Equal(500m, oldAfter.Dec("revenue"));             // the closed period is NOT rewritten
+        Assert.Equal(300m, oldAfter.Dec("cogs"));
         Assert.Equal(500m, oldAfter.Dec("paymentsReceived"));
-        // STILL the old behaviour until C3 reworks the Finance formulas (revenue by sale period, returns by return period):
-        Assert.Equal(0m, oldAfter.Dec("revenue"));            // closed period changed after the fact
-        Assert.Equal(0m, todayAfter.Dec("revenue"));          // ... and nothing shows in the period of the return
-        Assert.Equal(0m, todayAfter.Dec("paymentsReceived")); // C3: should become -500 (refund outflow of this period)
-        Assert.Equal(10, await StockAsync(product));          // stock itself IS correct
+        Assert.Equal(-500m, todayAfter.Dec("revenue"));          // the return shows up in the period it happened
+        Assert.Equal(-300m, todayAfter.Dec("cogs"));
+        Assert.Equal(-500m, todayAfter.Dec("paymentsReceived")); // refund outflow
+        Assert.Equal(10, await StockAsync(product));             // stock itself is correct
     }
 }

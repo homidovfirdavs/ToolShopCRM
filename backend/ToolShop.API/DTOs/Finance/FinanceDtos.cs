@@ -13,7 +13,10 @@ public record FinanceSummaryResponse(
     decimal AverageOrderValue,
     decimal GrossMarginPercent,
     decimal NetOperatingMarginPercent,
-    int UnknownCostItemsCount);
+    int UnknownCostItemsCount,
+    decimal ReturnsValue,
+    decimal RefundsPaid,
+    decimal WriteOffCost);
 
 public record DailyFinanceItem(
     DateOnly Date, decimal Revenue, decimal Cogs, decimal GrossProfit,

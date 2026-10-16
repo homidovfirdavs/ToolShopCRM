@@ -42,3 +42,13 @@ public record ProfitabilityReportResponse(
     decimal OperatingExpenses, decimal? NetOperatingProfit, decimal? NetOperatingMarginPercent,
     decimal PaymentsReceived, decimal AccountsReceivable, decimal PurchaseSpend,
     int CompletedOrdersCount, decimal AverageOrderValue, bool HasCompleteCostData);
+
+public record ReturnReportRowResponse(
+    int ReturnId, string ReturnNumber, DateTime ReturnedAt, int OrderId, string OrderNumber, string? CustomerName,
+    string ReturnedByUserName, string Reason, int ReturnedUnits, int RestockedUnits, int WrittenOffUnits,
+    decimal GoodsValue, decimal RefundAmount, string? RefundMethod, decimal? CostReversed, decimal? WriteOffCost);
+
+/// <summary>Returns of the period (by RETURN date). CostReversed / WriteOffCost totals are null (N/A) when any row has unknown cost.</summary>
+public record ReturnsReportResponse(
+    List<ReturnReportRowResponse> Items, int Page, int PageSize, int TotalItems, int TotalPages,
+    int ReturnsCount, decimal GoodsValue, decimal RefundsPaid, decimal? CostReversed, decimal? WriteOffCost);

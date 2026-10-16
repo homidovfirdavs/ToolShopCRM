@@ -5,6 +5,7 @@ using ToolShop.Domain.Entities.Sales;
 using ToolShop.Infrastructure.Inventory;
 using ToolShop.Infrastructure.Payments;
 using ToolShop.Infrastructure.Persistence;
+using ToolShop.Infrastructure.Sales;
 
 namespace ToolShop.Infrastructure.Reports;
 
@@ -34,6 +35,15 @@ public record ExpenseReportRowResult(
 public record PaymentReportRowResult(
     int PaymentId, string PaymentNumber, DateTime CreatedAt, string OrderNumber,
     string CustomerName, decimal Amount, string Method, string Status, string ReceivedByUserName);
+
+public record ReturnReportRowResult(
+    int ReturnId, string ReturnNumber, DateTime ReturnedAt, int OrderId, string OrderNumber, string? CustomerName,
+    string ReturnedByUserName, string Reason, int ReturnedUnits, int RestockedUnits, int WrittenOffUnits,
+    decimal GoodsValue, decimal RefundAmount, string? RefundMethod, decimal? CostReversed, decimal? WriteOffCost);
+
+/// <summary>Totals over ALL returns of the period. A cost total is null (N/A) when any of its rows has an unknown cost.</summary>
+public record ReturnsReportTotalsResult(
+    int ReturnsCount, decimal GoodsValue, decimal RefundsPaid, decimal? CostReversed, decimal? WriteOffCost);
 
 public class ReportsService
 {
@@ -105,11 +115,8 @@ public class ReportsService
 
         var orderIds = orders.Select(o => o.Id).ToList();
 
-        var paidByOrder = await _db.Payments.AsNoTracking()
-            .Where(p => orderIds.Contains(p.OrderId) && p.Status == PaymentStatus.Completed)
-            .GroupBy(p => p.OrderId)
-            .Select(g => new { OrderId = g.Key, Total = g.Sum(p => p.Amount) })
-            .ToDictionaryAsync(x => x.OrderId, x => x.Total);
+        // total - returned goods - (paid - refunded); the same formula as Finance, debts and the order screen.
+        var balances = await OrderBalance.LoadManyAsync(_db, orders.Select(o => (o.Id, o.TotalAmount)).ToList());
 
         var cashierIds = orders.Select(o => o.CreatedByUserId).Distinct().ToList();
         var cashierNames = await _db.Users.AsNoTracking()
@@ -118,9 +125,11 @@ public class ReportsService
 
         var result = orders.Select(o =>
         {
-            var totalPaid = paidByOrder.GetValueOrDefault(o.Id, 0m);
-            var outstanding = Math.Max(0, o.TotalAmount - totalPaid);
-            var payStatus = totalPaid <= 0 ? "Unpaid" : outstanding <= 0 ? "Paid" : "PartiallyPaid";
+            var balance = balances[o.Id];
+            var totalPaid = balance.NetPaid;
+            var outstanding = balance.Outstanding;
+            var payStatus = o.Status == OrderStatus.Returned ? "Refunded"
+                : totalPaid <= 0 ? "Unpaid" : outstanding <= 0 ? "Paid" : "PartiallyPaid";
 
             return new SalesReportRowResult(
                 o.Id, o.OrderNumber, o.OrderDate, o.CustomerName,
@@ -236,17 +245,14 @@ public class ReportsService
             var debt = await _paymentService.GetCustomerDebtAsync(customer.Id);
             if (debt <= 0) continue;
 
-            var outstandingOrderCount = await _db.Orders
-                .Where(o => o.CustomerId == customer.Id && o.Status == OrderStatus.Completed)
-                .CountAsync(o => (_db.Payments
-                    .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
-                    .Sum(p => (decimal?)p.Amount) ?? 0m) < o.TotalAmount);
+            var customerOrders = await _db.Orders.AsNoTracking()
+                .Where(o => o.CustomerId == customer.Id && SalesFilters.Receivable.Contains(o.Status))
+                .Select(o => new { o.Id, o.TotalAmount, o.OrderDate })
+                .ToListAsync();
+            var customerBalances = await OrderBalance.LoadManyAsync(_db, customerOrders.Select(o => (o.Id, o.TotalAmount)).ToList());
 
-            var lastPurchase = await _db.Orders
-                .Where(o => o.CustomerId == customer.Id && o.Status == OrderStatus.Completed)
-                .OrderByDescending(o => o.OrderDate)
-                .Select(o => (DateTime?)o.OrderDate)
-                .FirstOrDefaultAsync();
+            var outstandingOrderCount = customerBalances.Values.Count(b => b.Outstanding > 0m);
+            DateTime? lastPurchase = customerOrders.Count == 0 ? null : customerOrders.Max(o => o.OrderDate);
 
             result.Add(new CustomerDebtReportRowResult(
                 customer.Id, customer.Name, customer.Phone, outstandingOrderCount, debt, lastPurchase));
@@ -254,6 +260,53 @@ public class ReportsService
 
         return result.OrderByDescending(r => r.TotalDebt).ToList();
     }
+
+    // ===================== RETURNS REPORT (TASK C3) =====================
+
+    private async Task<List<ReturnReportRowResult>> GetReturnRowsAsync(DateTime from, DateTime to)
+    {
+        var returns = await _db.OrderReturns.AsNoTracking()
+            .Where(r => r.ReturnedAt >= from && r.ReturnedAt <= to)
+            .OrderByDescending(r => r.ReturnedAt).ThenByDescending(r => r.Id)
+            .Select(r => new
+            {
+                r.Id, r.ReturnNumber, r.ReturnedAt, r.OrderId,
+                OrderNumber = r.Order.OrderNumber,
+                CustomerName = r.Order.Customer != null ? r.Order.Customer.Name : null,
+                r.ReturnedByUserId, r.Reason, r.GoodsValue, r.RefundAmount, r.RefundMethod, r.CostReversed, r.WriteOffCost,
+                Units = r.Items.Sum(i => i.Quantity),
+                Restocked = r.Items.Sum(i => i.RestockedQuantity),
+                WrittenOff = r.Items.Sum(i => i.WrittenOffQuantity)
+            })
+            .ToListAsync();
+
+        var userIds = returns.Select(r => r.ReturnedByUserId).Distinct().ToList();
+        var userNames = await _db.Users.AsNoTracking()
+            .Where(u => userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.FullName);
+
+        return returns.Select(r => new ReturnReportRowResult(
+            r.Id, r.ReturnNumber, r.ReturnedAt, r.OrderId, r.OrderNumber, r.CustomerName,
+            userNames.GetValueOrDefault(r.ReturnedByUserId, "—"), r.Reason,
+            r.Units, r.Restocked, r.WrittenOff, r.GoodsValue, r.RefundAmount,
+            r.RefundMethod?.ToString(), r.CostReversed, r.WriteOffCost)).ToList();
+    }
+
+    public async Task<(List<ReturnReportRowResult> Items, int TotalCount, ReturnsReportTotalsResult Totals)> GetReturnsReportAsync(
+        DateTime from, DateTime to, int page, int pageSize)
+    {
+        var rows = await GetReturnRowsAsync(from, to);
+        var totals = new ReturnsReportTotalsResult(
+            rows.Count,
+            rows.Sum(r => r.GoodsValue),
+            rows.Sum(r => r.RefundAmount),
+            rows.Any(r => r.CostReversed is null) ? null : rows.Sum(r => r.CostReversed!.Value),
+            rows.Any(r => r.WriteOffCost is null) ? null : rows.Sum(r => r.WriteOffCost!.Value));
+        return (rows.Skip((page - 1) * pageSize).Take(pageSize).ToList(), rows.Count, totals);
+    }
+
+    public Task<List<ReturnReportRowResult>> GetReturnsReportForExportAsync(DateTime from, DateTime to) =>
+        GetReturnRowsAsync(from, to);
 
     // ===================== PURCHASE REPORT =====================
 

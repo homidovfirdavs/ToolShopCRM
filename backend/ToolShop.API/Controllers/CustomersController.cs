@@ -307,17 +307,18 @@ public class CustomersController : ControllerBase
         if (!customerExists) return NotFound(new { message = "Customer not found." });
 
         var orders = await _db.Orders.AsNoTracking()
-            .Where(o => o.CustomerId == id && o.Status == Domain.Entities.Sales.OrderStatus.Completed)
+            .Where(o => o.CustomerId == id && Infrastructure.Sales.SalesFilters.Receivable.Contains(o.Status))
             .OrderByDescending(o => o.OrderDate)
             .ToListAsync();
 
         var result = new List<object>();
         foreach (var order in orders)
         {
-            var outstanding = await paymentService.GetOrderOutstandingBalanceAsync(order.Id);
+            var balance = await Infrastructure.Sales.OrderBalance.LoadAsync(_db, order.Id, order.TotalAmount);
+            var outstanding = balance.Outstanding;
             if (outstanding > 0)
             {
-                var paid = order.TotalAmount - outstanding;
+                var paid = balance.NetPaid;
                 result.Add(new
                 {
                     orderId = order.Id,

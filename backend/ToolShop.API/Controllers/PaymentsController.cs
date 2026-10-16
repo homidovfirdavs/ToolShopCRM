@@ -8,6 +8,7 @@ using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Sales;
 using ToolShop.Infrastructure.Audit;
 using ToolShop.Infrastructure.Payments;
+using ToolShop.Infrastructure.Sales;
 using ToolShop.Infrastructure.Persistence;
 
 namespace ToolShop.API.Controllers;
@@ -256,19 +257,16 @@ public class PaymentsController : ControllerBase
             .ToListAsync();
         var customerIds = customers.Select(c => c.Id).ToList();
 
-        var orderRows = await _db.Orders.AsNoTracking()
+        var debtOrders = await _db.Orders.AsNoTracking()
             .Where(o => o.CustomerId != null && customerIds.Contains(o.CustomerId.Value)
-                        && o.Status == OrderStatus.Completed)
-            .Select(o => new
-            {
-                CustomerId = o.CustomerId!.Value,
-                o.OrderDate,
-                o.TotalAmount,
-                Paid = _db.Payments
-                    .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
-                    .Sum(p => (decimal?)p.Amount) ?? 0m
-            })
+                        && SalesFilters.Receivable.Contains(o.Status))
+            .Select(o => new { o.Id, CustomerId = o.CustomerId!.Value, o.OrderDate, o.TotalAmount })
             .ToListAsync();
+        // After returns: total - returned goods - (paid - refunded). Same formula as Finance / Dashboard / customer debt.
+        var debtBalances = await OrderBalance.LoadManyAsync(_db, debtOrders.Select(o => (o.Id, o.TotalAmount)).ToList());
+        var orderRows = debtOrders
+            .Select(o => new { o.CustomerId, o.OrderDate, Outstanding = debtBalances[o.Id].Outstanding })
+            .ToList();
 
         var byCustomer = orderRows.GroupBy(r => r.CustomerId).ToDictionary(g => g.Key, g => g.ToList());
 
@@ -276,14 +274,14 @@ public class PaymentsController : ControllerBase
             .Select(c =>
             {
                 var rows = byCustomer.GetValueOrDefault(c.Id) ?? [];
-                var debt = rows.Sum(r => Math.Max(0m, r.TotalAmount - r.Paid));
+                var debt = rows.Sum(r => r.Outstanding);
                 return new
                 {
                     customerId = c.Id,
                     customerName = c.Name,
                     isActive = c.IsActive,
                     phone = c.Phone,
-                    outstandingOrders = rows.Count(r => r.Paid < r.TotalAmount),
+                    outstandingOrders = rows.Count(r => r.Outstanding > 0m),
                     totalDebt = debt,
                     lastPurchase = rows.Count == 0 ? (DateTime?)null : rows.Max(r => r.OrderDate)
                 };
@@ -299,17 +297,12 @@ public class PaymentsController : ControllerBase
         // Reconciliation only (not a debt line): completed walk-in orders (no customer) that still have an
         // outstanding balance. Dashboard/Finance receivables include them; this list cannot (no customer to bill).
         var walkInOrders = await _db.Orders.AsNoTracking()
-            .Where(o => o.CustomerId == null && o.Status == OrderStatus.Completed)
+            .Where(o => o.CustomerId == null && SalesFilters.Receivable.Contains(o.Status))
             .Select(o => new { o.Id, o.TotalAmount })
             .ToListAsync();
-        var walkInIds = walkInOrders.Select(o => o.Id).ToList();
-        var walkInPaid = await _db.Payments.AsNoTracking()
-            .Where(p => walkInIds.Contains(p.OrderId) && p.Status == PaymentStatus.Completed)
-            .GroupBy(p => p.OrderId)
-            .Select(g => new { OrderId = g.Key, Total = g.Sum(p => p.Amount) })
-            .ToDictionaryAsync(x => x.OrderId, x => x.Total);
-        var walkInOutstanding = walkInOrders
-            .Select(o => Math.Max(0m, o.TotalAmount - walkInPaid.GetValueOrDefault(o.Id, 0m)))
+        var walkInBalances = await OrderBalance.LoadManyAsync(_db, walkInOrders.Select(o => (o.Id, o.TotalAmount)).ToList());
+        var walkInOutstanding = walkInBalances.Values
+            .Select(b => b.Outstanding)
             .Where(x => x > 0m)
             .ToList();
 
@@ -329,22 +322,14 @@ public class PaymentsController : ControllerBase
     [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> GetWalkInExceptions()
     {
-        var rows = await _db.Orders.AsNoTracking()
-            .Where(o => o.CustomerId == null && o.Status == OrderStatus.Completed)
-            .Select(o => new
-            {
-                o.Id,
-                o.OrderNumber,
-                o.OrderDate,
-                Total = o.TotalAmount,
-                Paid = _db.Payments
-                    .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
-                    .Sum(p => (decimal?)p.Amount) ?? 0m
-            })
+        var walkInRows = await _db.Orders.AsNoTracking()
+            .Where(o => o.CustomerId == null && SalesFilters.Receivable.Contains(o.Status))
+            .Select(o => new { o.Id, o.OrderNumber, o.OrderDate, Total = o.TotalAmount })
             .ToListAsync();
+        var walkInBalances = await OrderBalance.LoadManyAsync(_db, walkInRows.Select(o => (o.Id, o.Total)).ToList());
 
-        var items = rows
-            .Where(r => r.Total > r.Paid)
+        var items = walkInRows
+            .Where(r => walkInBalances[r.Id].Outstanding > 0m)
             .OrderBy(r => r.OrderDate)
             .Select(r => new
             {
@@ -352,8 +337,8 @@ public class PaymentsController : ControllerBase
                 orderNumber = r.OrderNumber,
                 orderDate = r.OrderDate,
                 total = r.Total,
-                paid = r.Paid,
-                outstanding = r.Total - r.Paid
+                paid = walkInBalances[r.Id].NetPaid,
+                outstanding = walkInBalances[r.Id].Outstanding
             })
             .ToList();
 

@@ -34,7 +34,8 @@ public class FinanceController : ControllerBase
         return Ok(new FinanceSummaryResponse(
             r.Revenue, r.Cogs, r.GrossProfit, r.OperatingExpenses, r.NetOperatingProfit,
             r.PaymentsReceived, r.AccountsReceivable, r.PurchaseSpend, r.CompletedOrdersCount,
-            r.AverageOrderValue, r.GrossMarginPercent, r.NetOperatingMarginPercent, r.UnknownCostItemsCount));
+            r.AverageOrderValue, r.GrossMarginPercent, r.NetOperatingMarginPercent, r.UnknownCostItemsCount,
+            r.ReturnsValue, r.RefundsPaid, r.WriteOffCost));
     }
 
     [HttpGet("daily")]

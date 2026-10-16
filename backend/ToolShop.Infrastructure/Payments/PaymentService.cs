@@ -51,20 +51,15 @@ public class PaymentService
 
     public async Task<decimal> GetCustomerDebtAsync(int customerId)
     {
-        // Single query: per completed order, outstanding = max(0, total - valid payments). Debt is never stored.
-        var rows = await _db.Orders
+        // Per sold order: outstanding = max(0, total - returned goods - (valid payments - refunds)). Debt is never stored.
+        var orders = await _db.Orders
             .AsNoTracking()
-            .Where(o => o.CustomerId == customerId && o.Status == OrderStatus.Completed)
-            .Select(o => new
-            {
-                o.TotalAmount,
-                Paid = _db.Payments
-                    .Where(p => p.OrderId == o.Id && p.Status == PaymentStatus.Completed)
-                    .Sum(p => (decimal?)p.Amount) ?? 0m
-            })
+            .Where(o => o.CustomerId == customerId && SalesFilters.Receivable.Contains(o.Status))
+            .Select(o => new { o.Id, o.TotalAmount })
             .ToListAsync();
 
-        return rows.Sum(r => Math.Max(0m, r.TotalAmount - r.Paid));
+        var balances = await OrderBalance.LoadManyAsync(_db, orders.Select(o => (o.Id, o.TotalAmount)).ToList());
+        return balances.Values.Sum(b => b.Outstanding);
     }
 
     public async Task<Payment> CreateAsync(
