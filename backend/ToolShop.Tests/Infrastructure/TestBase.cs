@@ -6,7 +6,9 @@ using ToolShop.Domain.Entities.Catalog;
 using ToolShop.Domain.Entities.Customers;
 using ToolShop.Domain.Entities.Inventory;
 using ToolShop.Domain.Entities.Payments;
+using ToolShop.Domain.Entities.Purchases;
 using ToolShop.Domain.Entities.Sales;
+using ToolShop.Infrastructure.Persistence;
 
 namespace ToolShop.Tests.Infrastructure;
 
@@ -44,8 +46,13 @@ public abstract class TestBase : IAsyncLifetime
 
     private string Unique(string prefix) => $"{prefix}-{Guid.NewGuid().ToString("N")[..10]}";
 
+    /// <summary>
+    /// Seeds a product. Its opening stock arrives as ONE confirmed purchase at <paramref name="purchasePrice"/>, so the moving-average
+    /// cost (F3a) of that stock is known and equals purchasePrice. Pass <paramref name="uncostedStock"/> = true for stock whose
+    /// cost was never recorded (a plain stock-in): selling it must give CostAtSale = null.
+    /// </summary>
     protected async Task<int> SeedProductAsync(decimal salePrice = 100m, decimal purchasePrice = 60m, int stock = 0,
-        bool active = true, int minimumStock = 0)
+        bool active = true, int minimumStock = 0, bool uncostedStock = false)
     {
         return await Factory.WithDbAsync(async db =>
         {
@@ -69,7 +76,7 @@ public abstract class TestBase : IAsyncLifetime
             db.Products.Add(product);
             await db.SaveChangesAsync();
 
-            if (stock > 0)
+            if (stock > 0 && uncostedStock)
             {
                 db.InventoryMovements.Add(new InventoryMovement
                 {
@@ -81,9 +88,54 @@ public abstract class TestBase : IAsyncLifetime
                 });
                 await db.SaveChangesAsync();
             }
+            else if (stock > 0)
+            {
+                await AddConfirmedPurchaseAsync(db, product.Id, stock, purchasePrice, 0m);
+            }
 
             return product.Id;
         });
+    }
+
+    /// <summary>A CONFIRMED purchase of one product (document + its inventory movement), as the real Confirm creates it.</summary>
+    protected Task SeedConfirmedPurchaseAsync(int productId, int quantity, decimal unitCost, decimal discount = 0m) =>
+        Factory.WithDbAsync(db => AddConfirmedPurchaseAsync(db, productId, quantity, unitCost, discount));
+
+    private async Task AddConfirmedPurchaseAsync(AppDbContext db, int productId, int quantity, decimal unitCost, decimal discount)
+    {
+        var supplier = new Supplier { Name = Unique("supplier") };
+        db.Suppliers.Add(supplier);
+        await db.SaveChangesAsync();
+
+        var subtotal = quantity * unitCost;
+        var purchase = new Purchase
+        {
+            PurchaseNumber = Unique("PUR"),
+            SupplierId = supplier.Id,
+            Status = PurchaseStatus.Confirmed,
+            PurchaseDate = DateTime.UtcNow,
+            Subtotal = subtotal,
+            DiscountAmount = discount,
+            TotalAmount = subtotal - discount,
+            CreatedByUserId = Factory.AdminUserId,
+            ConfirmedByUserId = Factory.AdminUserId,
+            ConfirmedAt = DateTime.UtcNow,
+            Items = [new PurchaseItem { ProductId = productId, Quantity = quantity, UnitCost = unitCost, LineTotal = subtotal }]
+        };
+        db.Purchases.Add(purchase);
+        await db.SaveChangesAsync();
+
+        db.InventoryMovements.Add(new InventoryMovement
+        {
+            ProductId = productId,
+            MovementType = InventoryMovementType.Purchase,
+            Quantity = quantity,
+            ReferenceType = "Purchase",
+            ReferenceId = purchase.Id,
+            Reason = $"Purchase {purchase.PurchaseNumber}",
+            CreatedByUserId = Factory.AdminUserId
+        });
+        await db.SaveChangesAsync();
     }
 
     protected async Task<int> SeedCustomerAsync(bool active = true)

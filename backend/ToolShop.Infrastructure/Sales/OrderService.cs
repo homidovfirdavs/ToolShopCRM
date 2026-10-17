@@ -6,6 +6,7 @@ using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Purchases;
 using ToolShop.Domain.Entities.Sales;
 using ToolShop.Infrastructure.Idempotency;
+using ToolShop.Infrastructure.Inventory;
 using ToolShop.Infrastructure.Payments;
 using ToolShop.Infrastructure.Persistence;
 
@@ -104,6 +105,96 @@ public class OrderService
     }
 
     /// <summary>
+    /// F3a - cost of one unit of each product's CURRENT stock (null = unknown), see <see cref="MovingAverageCost"/>.
+    /// Runs inside the sale's serializable transaction, before the sale's own movements exist.
+    /// </summary>
+    private async Task<Dictionary<int, decimal?>> CalculateSaleCostsAsync(List<int> productIds)
+    {
+        var movements = await _db.InventoryMovements.AsNoTracking()
+            .Where(m => productIds.Contains(m.ProductId))
+            .OrderBy(m => m.Id)
+            .Select(m => new { m.ProductId, m.MovementType, m.Quantity, m.ReferenceType, m.ReferenceId })
+            .ToListAsync();
+
+        // Purchases: real unit cost per (purchase, product), with the purchase-level discount spread over the lines pro rata.
+        var purchaseIds = movements
+            .Where(m => m.MovementType == InventoryMovementType.Purchase && m.ReferenceId != null)
+            .Select(m => m.ReferenceId!.Value).Distinct().ToList();
+
+        var purchaseLines = await _db.PurchaseItems.AsNoTracking()
+            .Where(pi => purchaseIds.Contains(pi.PurchaseId) && productIds.Contains(pi.ProductId)
+                         && pi.Purchase.Status == PurchaseStatus.Confirmed)
+            .Select(pi => new { pi.PurchaseId, pi.ProductId, pi.Quantity, pi.UnitCost, pi.Purchase.Subtotal, pi.Purchase.TotalAmount })
+            .ToListAsync();
+
+        var purchaseCost = purchaseLines
+            .GroupBy(l => (l.PurchaseId, l.ProductId))
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                {
+                    var quantity = g.Sum(l => l.Quantity);
+                    var gross = g.Sum(l => l.Quantity * l.UnitCost);
+                    var factor = g.First().Subtotal > 0 ? g.First().TotalAmount / g.First().Subtotal : 1m;
+                    return quantity == 0 ? (decimal?)null : gross * factor / quantity;
+                });
+
+        // Returned units go back to stock at the cost they were sold for (null = that sale's cost was unknown).
+        var returnOrderIds = movements
+            .Where(m => m.MovementType == InventoryMovementType.SaleReturn && m.ReferenceId != null)
+            .Select(m => m.ReferenceId!.Value).Distinct().ToList();
+
+        var soldLines = await _db.OrderItems.AsNoTracking()
+            .Where(i => returnOrderIds.Contains(i.OrderId) && productIds.Contains(i.ProductId))
+            .Select(i => new { i.OrderId, i.ProductId, i.Quantity, i.CostAtSale })
+            .ToListAsync();
+
+        var saleCost = soldLines
+            .GroupBy(l => (l.OrderId, l.ProductId))
+            .ToDictionary(
+                g => g.Key,
+                g => g.Any(l => l.CostAtSale is null)
+                    ? (decimal?)null
+                    : g.Sum(l => l.Quantity * l.CostAtSale!.Value) / g.Sum(l => l.Quantity));
+
+        var result = new Dictionary<int, decimal?>();
+        foreach (var productId in productIds)
+        {
+            var events = new List<CostEvent>();
+            foreach (var m in movements.Where(m => m.ProductId == productId))
+            {
+                switch (m.MovementType)
+                {
+                    case InventoryMovementType.Purchase:
+                        events.Add(m.ReferenceId is { } pid && purchaseCost.TryGetValue((pid, productId), out var pc) && pc is { } pcost
+                            ? new CostEvent(CostEventKind.KnownIn, m.Quantity, pcost)
+                            : new CostEvent(CostEventKind.UnknownIn, m.Quantity));
+                        break;
+
+                    case InventoryMovementType.SaleReturn:
+                        events.Add(m.ReferenceId is { } oid && saleCost.TryGetValue((oid, productId), out var sc) && sc is { } scost
+                            ? new CostEvent(CostEventKind.KnownIn, m.Quantity, scost)
+                            : new CostEvent(CostEventKind.UnknownIn, m.Quantity));
+                        break;
+
+                    case InventoryMovementType.StockIn:
+                    case InventoryMovementType.AdjustmentIncrease:
+                        events.Add(new CostEvent(CostEventKind.UnknownIn, m.Quantity));
+                        break;
+
+                    default: // StockOut, AdjustmentDecrease, Sale, PurchaseReturn
+                        events.Add(new CostEvent(CostEventKind.Out, m.Quantity));
+                        break;
+                }
+            }
+
+            result[productId] = MovingAverageCost.Compute(events);
+        }
+
+        return result;
+    }
+
+    /// <summary>
 /// Completes a draft order. When <paramref name="initialPayment"/> is supplied it is recorded in the SAME
 /// serializable transaction (stock deduction + completion + payment are all-or-nothing).
 /// Business rule: a walk-in order (CustomerId == null) can only be completed with a payment covering the full total.
@@ -115,7 +206,7 @@ public async Task<OrderCompleteResult> CompleteAsync(
         int orderId, string userId, string idempotencyKey, InitialPaymentInput? initialPayment = null)
     {
         // Same-key losers retry once into the replay; extra headroom for ordinary 40001s.
-        const int maxRetries = 5;
+        const int maxRetries = 12; // parallel sales of one product conflict on SERIALIZABLE; each loser retries
         var requestHash = OrderRequestHash.ForComplete(orderId, initialPayment);
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
@@ -203,20 +294,11 @@ public async Task<OrderCompleteResult> CompleteAsync(
                     throw new InsufficientStockForSaleException(shortages);
                 }
 
-                // TASK 09 — COGS cost snapshot strategy:
-                // 1) Use the UnitCost from the most recently CONFIRMED purchase of this product.
-                // 2) If no purchase history exists, fall back to the product's current PurchasePrice.
-                // This value never changes again after being written (historical profit stays stable).
-                var latestPurchaseCosts = await _db.PurchaseItems
-                    .AsNoTracking()
-                    .Where(pi => productIds.Contains(pi.ProductId) && pi.Purchase.Status == PurchaseStatus.Confirmed)
-                    .GroupBy(pi => pi.ProductId)
-                    .Select(g => new
-                    {
-                        ProductId = g.Key,
-                        UnitCost = g.OrderByDescending(pi => pi.Purchase.ConfirmedAt).Select(pi => pi.UnitCost).First()
-                    })
-                    .ToDictionaryAsync(x => x.ProductId, x => x.UnitCost);
+                // F3a - COGS cost snapshot = MOVING WEIGHTED AVERAGE cost of the stock at the moment of sale, replayed from the
+                // inventory movements (purchases at their real cost incl. the purchase discount, returned units at their sale cost).
+                // Units whose cost was never recorded (stock-in / adjustment up) make the cost UNKNOWN: CostAtSale = null - never an
+                // estimate and never 0. The value is written once and never recalculated, so history stays stable.
+                var saleCosts = await CalculateSaleCostsAsync(productIds);
 
                 // Recalculate totals server-side.
                 decimal subtotal = 0;
@@ -225,9 +307,7 @@ public async Task<OrderCompleteResult> CompleteAsync(
                     item.LineTotal = (item.Quantity * item.UnitPrice) - item.DiscountAmount;
                     subtotal += item.LineTotal;
 
-                    item.CostAtSale = latestPurchaseCosts.TryGetValue(item.ProductId, out var cost)
-                        ? cost
-                        : item.Product.PurchasePrice;
+                    item.CostAtSale = saleCosts.GetValueOrDefault(item.ProductId);
                 }
 
                 order.Subtotal = subtotal;
@@ -300,6 +380,8 @@ public async Task<OrderCompleteResult> CompleteAsync(
             {
                 await SafeRollbackAsync(transaction);
                 _db.ChangeTracker.Clear(); // drop half-applied entities before retrying
+                // Small random pause so the losers do not collide again in lockstep.
+                await Task.Delay(Random.Shared.Next(10, 40) * attempt);
             }
             finally
             {
