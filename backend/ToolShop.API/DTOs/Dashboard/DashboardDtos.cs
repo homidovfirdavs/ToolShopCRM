@@ -18,3 +18,12 @@ public record LowStockItemResponse(
 public record FinancialSummaryShortResponse(
     decimal Revenue, decimal? Cogs, decimal? GrossProfit, decimal OperatingExpenses,
     decimal? NetOperatingProfit, bool HasCompleteCostData);
+
+public record TopProductItemResponse(
+    int ProductId, string ProductName, string Sku, int QuantitySold, decimal Revenue, decimal? GrossProfit);
+
+public record TopProductsResponse(
+    DateOnly DateFrom, DateOnly DateTo,
+    List<TopProductItemResponse> BestSelling,
+    List<TopProductItemResponse> MostProfitable,
+    List<TopProductItemResponse> UnknownProfit);

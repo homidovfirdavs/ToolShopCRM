@@ -25,6 +25,15 @@ public record FinancialSummaryShortResult(
     decimal Revenue, decimal? Cogs, decimal? GrossProfit, decimal OperatingExpenses,
     decimal? NetOperatingProfit, bool HasCompleteCostData);
 
+public record TopProductItemResult(
+    int ProductId, string ProductName, string Sku, int QuantitySold, decimal Revenue, decimal? GrossProfit);
+
+public record TopProductsResult(
+    DateOnly DateFrom, DateOnly DateTo,
+    List<TopProductItemResult> BestSelling,
+    List<TopProductItemResult> MostProfitable,
+    List<TopProductItemResult> UnknownProfit);
+
 public class DashboardService
 {
     private readonly AppDbContext _db;
@@ -119,6 +128,41 @@ public class DashboardService
                 x.Id, x.Name, x.SKU, x.CurrentStock, x.MinimumStockLevel,
                 x.CurrentStock <= 0 ? "OutOfStock" : "LowStock"))
             .ToList();
+    }
+
+    /// <summary>
+    /// Top-7. Uses the SAME per-product numbers as the Product Performance report (net of returns, CostAtSale based, report days in
+    /// shop-local time) - no formula of its own.
+    ///   BestSelling    - by net quantity sold (sales minus returns).
+    ///   MostProfitable - by product gross profit; ONLY products whose cost is fully known and whose profit is positive.
+    ///   UnknownProfit  - sold products whose profit is N/A (some sold unit has no known cost). They never enter the profit ranking
+    ///                    and are never shown as 0.
+    /// </summary>
+    public async Task<TopProductsResult> GetTopProductsAsync(DateTime from, DateTime to, int top = 5)
+    {
+        top = Math.Clamp(top, 1, 20);
+        var (all, _) = await _financeService.GetProfitByProductAsync(from, to, "revenue", 1, int.MaxValue);
+
+        static TopProductItemResult Map(ProfitByProductResult p) =>
+            new(p.ProductId, p.ProductName, p.Sku, p.QuantitySold, p.Revenue, p.GrossProfit);
+
+        var bestSelling = all
+            .Where(p => p.QuantitySold > 0)
+            .OrderByDescending(p => p.QuantitySold).ThenByDescending(p => p.Revenue).ThenBy(p => p.ProductName)
+            .Take(top).Select(Map).ToList();
+
+        var mostProfitable = all
+            .Where(p => p.HasCompleteCostData && p.GrossProfit is > 0m)
+            .OrderByDescending(p => p.GrossProfit).ThenBy(p => p.ProductName)
+            .Take(top).Select(Map).ToList();
+
+        var unknownProfit = all
+            .Where(p => !p.HasCompleteCostData && p.QuantitySold > 0)
+            .OrderByDescending(p => p.Revenue).ThenBy(p => p.ProductName)
+            .Take(top).Select(Map).ToList();
+
+        return new TopProductsResult(
+            DateOnly.FromDateTime(from), DateOnly.FromDateTime(to), bestSelling, mostProfitable, unknownProfit);
     }
 
     public async Task<FinancialSummaryShortResult> GetFinancialSummaryShortAsync(DateTime from, DateTime to)

@@ -53,6 +53,23 @@ export interface FinancialSummaryShort {
   hasCompleteCostData: boolean;
 }
 
+export interface TopProductItem {
+  productId: number;
+  productName: string;
+  sku: string;
+  quantitySold: number;
+  revenue: number;
+  grossProfit: number | null;
+}
+
+export interface TopProducts {
+  dateFrom: string;
+  dateTo: string;
+  bestSelling: TopProductItem[];
+  mostProfitable: TopProductItem[];
+  unknownProfit: TopProductItem[];
+}
+
 export async function getDashboardSummary(from: string, to: string): Promise<DashboardSummary> {
   const res = await apiClient.get("/dashboard/summary", { params: { from, to } });
   return res.data;
@@ -80,5 +97,10 @@ export async function getLowStock(top = 10): Promise<LowStockItem[]> {
 
 export async function getFinancialSummaryShort(from: string, to: string): Promise<FinancialSummaryShort> {
   const res = await apiClient.get("/dashboard/financial-summary", { params: { from, to } });
+  return res.data;
+}
+
+export async function getTopProducts(from: string, to: string, top = 5): Promise<TopProducts> {
+  const res = await apiClient.get("/dashboard/top-products", { params: { from, to, top } });
   return res.data;
 }

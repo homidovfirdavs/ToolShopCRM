@@ -9,6 +9,7 @@ const getSalesByCategory = vi.fn();
 const getAttention = vi.fn();
 const getLowStock = vi.fn();
 const getFinancialSummaryShort = vi.fn();
+const getTopProducts = vi.fn();
 
 vi.mock("../api/dashboard", () => ({
   getDashboardSummary: (...a: unknown[]) => getDashboardSummary(...a),
@@ -17,6 +18,7 @@ vi.mock("../api/dashboard", () => ({
   getAttention: (...a: unknown[]) => getAttention(...a),
   getLowStock: (...a: unknown[]) => getLowStock(...a),
   getFinancialSummaryShort: (...a: unknown[]) => getFinancialSummaryShort(...a),
+  getTopProducts: (...a: unknown[]) => getTopProducts(...a),
 }));
 
 const summary = (over: Record<string, unknown> = {}) => ({
@@ -39,7 +41,12 @@ function setup(cur = summary(), prev: ReturnType<typeof summary> | null = summar
   getFinancialSummaryShort.mockResolvedValue({
     revenue: 17290, cogs: 13290, grossProfit: 4000, operatingExpenses: 1000, netOperatingProfit: 3000, hasCompleteCostData: true,
   });
+  getTopProducts.mockReset();
+  getTopProducts.mockResolvedValue({ dateFrom: "2026-01-01", dateTo: "2026-01-30", bestSelling: [], mostProfitable: [], unknownProfit: [] });
 }
+
+const top = (id: number, name: string, qty: number, revenue: number, grossProfit: number | null) =>
+  ({ productId: id, productName: name, sku: `SKU-${id}`, quantitySold: qty, revenue, grossProfit });
 
 /** The KPI card that contains the given label. */
 function kpi(label: string): HTMLElement {
@@ -50,7 +57,7 @@ function kpi(label: string): HTMLElement {
 describe("DashboardPage", () => {
   beforeEach(() => {
     getSalesTrend.mockReset(); getSalesByCategory.mockReset(); getAttention.mockReset();
-    getLowStock.mockReset(); getFinancialSummaryShort.mockReset();
+    getLowStock.mockReset(); getFinancialSummaryShort.mockReset(); getTopProducts.mockReset();
   });
 
   it("renders KPI values from the API", async () => {
@@ -177,5 +184,61 @@ describe("DashboardPage", () => {
     getDashboardSummary.mockRejectedValue(new Error("x"));
     renderApp(<DashboardPage />);
     expect(await screen.findByText(T("dash.loadError"))).toBeInTheDocument();
+  });
+
+  it("Top-7: shows best-selling by quantity and most profitable by profit, from the API order, with the date range", async () => {
+    setup();
+    getTopProducts.mockResolvedValue({
+      dateFrom: "2026-01-01", dateTo: "2026-01-30",
+      bestSelling: [top(1, "Болт", 90, 900, 400), top(2, "Дрел", 3, 3000, 1500)],
+      mostProfitable: [top(2, "Дрел", 3, 3000, 1500), top(1, "Болт", 90, 900, 400)],
+      unknownProfit: [],
+    });
+    renderApp(<DashboardPage />);
+    await screen.findByText(T("dash.topSelling"));
+    const selling = within(screen.getByTestId("top-selling")).getAllByTestId("top-row");
+    expect(selling[0]).toHaveTextContent("Болт");
+    expect(selling[0]).toHaveTextContent("90");
+    expect(selling[1]).toHaveTextContent("Дрел");
+    const profit = within(screen.getByTestId("top-profit")).getAllByTestId("top-row");
+    expect(profit[0]).toHaveTextContent("Дрел");
+    expect(profit[0]).toHaveTextContent("1 500 TJS");
+    expect(getTopProducts).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), 5);
+  });
+
+  it("Top-7: a product with unknown profit is shown as N/A in its own block and never as 0", async () => {
+    setup();
+    getTopProducts.mockResolvedValue({
+      dateFrom: "2026-01-01", dateTo: "2026-01-30",
+      bestSelling: [top(7, "Шуруп", 40, 400, null)],
+      mostProfitable: [],
+      unknownProfit: [top(7, "Шуруп", 40, 400, null)],
+    });
+    renderApp(<DashboardPage />);
+    await screen.findByText(T("dash.topProfit"));
+    const profitCard = screen.getByTestId("top-profit");
+    expect(within(profitCard).getByText(T("dash.topNoProfit"))).toBeInTheDocument();     // not ranked
+    const unknown = within(profitCard).getByTestId("top-unknown");
+    expect(within(unknown).getByText("N/A")).toBeInTheDocument();
+    expect(within(unknown).getByText(T("dash.topUnknown"))).toBeInTheDocument();
+    expect(within(profitCard).queryByText("0 TJS")).not.toBeInTheDocument();
+  });
+
+  it("Top-7: empty period shows the empty messages", async () => {
+    setup();
+    renderApp(<DashboardPage />);
+    await screen.findByText(T("dash.topSelling"));
+    expect(within(screen.getByTestId("top-selling")).getByText(T("dash.topNoSales"))).toBeInTheDocument();
+    expect(within(screen.getByTestId("top-profit")).getByText(T("dash.topNoProfit"))).toBeInTheDocument();
+  });
+
+  it("Top-7: if the top-products request fails only its two cards show an error; the KPIs stay", async () => {
+    setup();
+    getTopProducts.mockRejectedValue(new Error("x"));
+    renderApp(<DashboardPage />);
+    expect(await screen.findByText(T("kpi.revenue"))).toBeInTheDocument();
+    expect(within(screen.getByTestId("top-selling")).getByText(T("dash.topError"))).toBeInTheDocument();
+    expect(within(screen.getByTestId("top-profit")).getByText(T("dash.topError"))).toBeInTheDocument();
+    expect(screen.queryByText(T("dash.loadError"))).not.toBeInTheDocument();
   });
 });

@@ -68,6 +68,23 @@ public class DashboardController : ControllerBase
         return Ok(r.Select(x => new LowStockItemResponse(x.ProductId, x.ProductName, x.Sku, x.CurrentStock, x.MinimumStockLevel, x.Status)).ToList());
     }
 
+    [HttpGet("top-products")]
+    public async Task<ActionResult<TopProductsResponse>> GetTopProducts(
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int top = 5)
+    {
+        var (f, t) = ResolveRange(from, to);
+        var r = await _dashboardService.GetTopProductsAsync(f, t, top);
+
+        static TopProductItemResponse Map(TopProductItemResult x) =>
+            new(x.ProductId, x.ProductName, x.Sku, x.QuantitySold, x.Revenue, x.GrossProfit);
+
+        return Ok(new TopProductsResponse(
+            r.DateFrom, r.DateTo,
+            r.BestSelling.Select(Map).ToList(),
+            r.MostProfitable.Select(Map).ToList(),
+            r.UnknownProfit.Select(Map).ToList()));
+    }
+
     [HttpGet("financial-summary")]
     public async Task<ActionResult<FinancialSummaryShortResponse>> GetFinancialSummary([FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {

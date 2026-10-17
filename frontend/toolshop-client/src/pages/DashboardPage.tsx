@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import {
   getDashboardSummary, getSalesTrend, getSalesByCategory, getAttention,
-  getLowStock, getFinancialSummaryShort, type DashboardSummary,
+  getLowStock, getFinancialSummaryShort, getTopProducts, type DashboardSummary, type TopProductItem, type TopProducts,
 } from "../api/dashboard";
 import { getPresetRange, toDateStr, type DateRange, type PresetKey } from "../lib/dateRange";
 import { useAsyncData } from "../lib/useAsyncData";
@@ -46,7 +46,7 @@ function pctChange(cur: number | null, prev: number | null | undefined): number 
 async function loadAll(range: DateRange) {
   if (!range.from || !range.to) return null;
   const prev = previousRange(range);
-  const [summary, trend, byCategory, attention, lowStock, fin, prevSummary] = await Promise.all([
+  const [summary, trend, byCategory, attention, lowStock, fin, prevSummary, topProducts] = await Promise.all([
     getDashboardSummary(range.from, range.to),
     getSalesTrend(range.from, range.to),
     getSalesByCategory(range.from, range.to),
@@ -55,12 +55,33 @@ async function loadAll(range: DateRange) {
     getFinancialSummaryShort(range.from, range.to),
     // Comparison is optional: if it fails the cards simply show no change line.
     getDashboardSummary(prev.from, prev.to).catch((): DashboardSummary | null => null),
+    // Top products is optional too: a failure only empties its own two cards, never the KPIs.
+    getTopProducts(range.from, range.to, 5).catch((): TopProducts | null => null),
   ]);
-  return { summary, trend, byCategory, attention, lowStock, fin, prevSummary };
+  return { summary, trend, byCategory, attention, lowStock, fin, prevSummary, topProducts };
 }
 
 const compactMoney = (v: number) =>
   Math.abs(v) >= 1000 ? `${new Intl.NumberFormat("en-US").format(v).replace(/,/g, " ")}` : String(v);
+
+/** One ranked product row. `value` is already formatted; N/A is passed as the text "N/A", never as 0. */
+function TopRow({ rank, p, value, sub }: { rank: number; p: TopProductItem; value: string; sub: string }) {
+  return (
+    <li className="flex items-center gap-3 py-2.5" data-testid="top-row">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[13px] font-semibold text-slate-600">
+        {rank}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px] font-medium text-slate-800" title={p.productName}>{p.productName}</span>
+        <span className="block truncate text-[13px] text-slate-500">{p.sku}</span>
+      </span>
+      <span className="shrink-0 text-right">
+        <span className="block text-[15px] font-semibold text-slate-900">{value}</span>
+        <span className="block text-[13px] text-slate-500">{sub}</span>
+      </span>
+    </li>
+  );
+}
 
 export default function DashboardPage() {
   const { t } = useI18n();
@@ -356,6 +377,76 @@ export default function DashboardPage() {
                   </table>
                 </div>
               )}
+            </Card>
+          </div>
+
+          {/* Top-7: both lists come from the API (same numbers as the Product Performance report, net of returns). */}
+          <div className="mb-5 grid grid-cols-1 gap-4 min-[1200px]:grid-cols-2">
+            <Card title={t("dash.topSelling")} className="!rounded-2xl">
+              <div data-testid="top-selling">
+                {!data.topProducts ? (
+                  <EmptyState message={t("dash.topError")} />
+                ) : data.topProducts.bestSelling.length === 0 ? (
+                  <EmptyState message={t("dash.topNoSales")} />
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {data.topProducts.bestSelling.map((p, i) => (
+                      <TopRow
+                        key={p.productId}
+                        rank={i + 1}
+                        p={p}
+                        value={`${formatNumber(p.quantitySold)} ${t("dash.pcs")}`}
+                        sub={formatMoney(p.revenue)}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Card>
+
+            <Card title={t("dash.topProfit")} className="!rounded-2xl">
+              <div data-testid="top-profit">
+                {!data.topProducts ? (
+                  <EmptyState message={t("dash.topError")} />
+                ) : (
+                  <>
+                    {data.topProducts.mostProfitable.length === 0 ? (
+                      <EmptyState message={t("dash.topNoProfit")} />
+                    ) : (
+                      <ul className="divide-y divide-slate-100">
+                        {data.topProducts.mostProfitable.map((p, i) => (
+                          <TopRow
+                            key={p.productId}
+                            rank={i + 1}
+                            p={p}
+                            value={formatMoney(p.grossProfit)}
+                            sub={`${formatNumber(p.quantitySold)} ${t("dash.pcs")}`}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                    {data.topProducts.unknownProfit.length > 0 && (
+                      <div data-testid="top-unknown" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                        <p className="mb-1 flex items-start gap-2 text-[13px] text-amber-800">
+                          <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+                          <span>{t("dash.topUnknown")}</span>
+                        </p>
+                        <ul className="divide-y divide-amber-100">
+                          {data.topProducts.unknownProfit.map((p, i) => (
+                            <TopRow
+                              key={p.productId}
+                              rank={i + 1}
+                              p={p}
+                              value="N/A"
+                              sub={`${formatNumber(p.quantitySold)} ${t("dash.pcs")}`}
+                            />
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </Card>
           </div>
         </>
