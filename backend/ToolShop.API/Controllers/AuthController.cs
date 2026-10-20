@@ -45,20 +45,35 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByNameAsync(request.UsernameOrEmail)
             ?? await _userManager.FindByEmailAsync(request.UsernameOrEmail);
 
-        if (user is null || !user.IsActive)
+        if (user is null)
         {
+            // The typed name is NOT stored: people sometimes type their password into the username field.
+            await TryAuditFailureAsync(null, "Login failed: unknown user.");
             return Unauthorized(new { message = "Invalid username/email or password." });
         }
 
+        if (!user.IsActive)
+        {
+            await TryAuditFailureAsync(user, $"Login failed: user '{user.UserName}' is deactivated.");
+            return Unauthorized(new { message = "Invalid username/email or password." });
+        }
+
+        var wasLockedOut = await _userManager.IsLockedOutAsync(user);
         var signInResult = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
 
         if (signInResult.IsLockedOut)
         {
+            if (wasLockedOut)
+                await TryAuditFailureAsync(user, $"Login refused: user '{user.UserName}' is locked out.");
+            else
+                await TryAuditAsync(user, "Auth.LockedOut", $"User '{user.UserName}' was locked out after repeated failed logins.");
+
             return Unauthorized(new { message = "Account temporarily locked due to multiple failed attempts. Try again later." });
         }
 
         if (!signInResult.Succeeded)
         {
+            await TryAuditFailureAsync(user, $"Login failed: wrong password for user '{user.UserName}'.");
             return Unauthorized(new { message = "Invalid username/email or password." });
         }
 
@@ -170,5 +185,25 @@ public class AuthController : ControllerBase
         return NoContent();
     }
 
-    
+    private Task TryAuditFailureAsync(ApplicationUser? user, string description) =>
+        TryAuditAsync(user, "Auth.LoginFailed", description);
+
+    // A failed audit write must never change the login response.
+    private async Task TryAuditAsync(ApplicationUser? user, string action, string description)
+    {
+        try
+        {
+            await _auditService.LogAsync(
+                user?.Id,
+                action,
+                user is null ? null : "User",
+                user?.Id,
+                description,
+                HttpContext.Connection.RemoteIpAddress?.ToString());
+        }
+        catch
+        {
+            // intentionally swallowed
+        }
+    }
 }

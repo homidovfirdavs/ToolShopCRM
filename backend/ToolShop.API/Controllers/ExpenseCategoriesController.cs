@@ -14,11 +14,18 @@ namespace ToolShop.API.Controllers;
 public class ExpenseCategoriesController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly ToolShop.Infrastructure.Audit.AuditService _audit;
 
-    public ExpenseCategoriesController(AppDbContext db)
+    public ExpenseCategoriesController(AppDbContext db, ToolShop.Infrastructure.Audit.AuditService audit)
     {
         _db = db;
+        _audit = audit;
     }
+
+    private string? CurrentUserId =>
+        User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+    private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
 
     [HttpGet]
     [Authorize(Policy = Permissions.ExpensesView)]
@@ -63,6 +70,8 @@ public class ExpenseCategoriesController : ControllerBase
 
         _db.ExpenseCategories.Add(category);
         await _db.SaveChangesAsync();
+        await _audit.LogAsync(CurrentUserId, "ExpenseCategory.Create", "ExpenseCategory", category.Id.ToString(),
+            $"Created expense category '{category.Name}'.", Ip);
 
         return Ok(new ExpenseCategoryResponse(category.Id, category.Name, category.Description, category.IsActive, category.CreatedAt));
     }
@@ -87,6 +96,8 @@ public class ExpenseCategoriesController : ControllerBase
         category.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
+        await _audit.LogAsync(CurrentUserId, "ExpenseCategory.Update", "ExpenseCategory", category.Id.ToString(),
+            $"Updated expense category '{category.Name}'.", Ip);
 
         return Ok(new ExpenseCategoryResponse(category.Id, category.Name, category.Description, category.IsActive, category.CreatedAt));
     }
@@ -105,6 +116,8 @@ public class ExpenseCategoriesController : ControllerBase
         category.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
+        await _audit.LogAsync(CurrentUserId, "ExpenseCategory.Deactivate", "ExpenseCategory", category.Id.ToString(),
+            $"Deactivated expense category '{category.Name}'.", Ip);
 
         return NoContent();
     }
