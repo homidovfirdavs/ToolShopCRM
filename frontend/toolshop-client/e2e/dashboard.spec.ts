@@ -4,6 +4,7 @@ import { Api, T, formatMoney, signedInPage } from "./helpers";
 interface Summary {
   salesRevenue: number;
   grossProfit: number | null;
+  operatingExpenses: number;
   accountsReceivable: number;
   paymentsReceived: number;
 }
@@ -38,8 +39,9 @@ test("KPI cards show exactly the numbers returned by the API", async ({ page }) 
   await expect(kpiCard(page, T("kpi.revenue"))).toContainText(formatMoney(s.salesRevenue));
   await expect(kpiCard(page, T("kpi.debt"))).toContainText(formatMoney(s.accountsReceivable));
   await expect(kpiCard(page, T("kpi.payments"))).toContainText(formatMoney(s.paymentsReceived));
-  // null gross profit must read N/A, never 0
-  await expect(kpiCard(page, T("kpi.gross"))).toContainText(formatMoney(s.grossProfit));
+  // Gross profit is no longer a KPI card (it is a line in the trend chart); the cards are Revenue, Payments, Debt,
+  // Operating Expenses and Net Profit.
+  await expect(kpiCard(page, T("kpi.opex"))).toContainText(formatMoney(s.operatingExpenses));
 });
 
 test("a credit sale raises Customer Debt and Revenue by exactly the right amounts", async ({ page }) => {

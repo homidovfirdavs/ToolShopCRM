@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, request, type APIRequestContext, type Page } from "@playwright/test";
 import { translations } from "../src/i18n/translations";
 import { formatMoney } from "../src/lib/format";
@@ -55,7 +56,10 @@ export class Api {
   }
 
   async post<R = any>(path: string, data?: unknown, expectOk = true): Promise<R> { // eslint-disable-line @typescript-eslint/no-explicit-any
-    const res = await this.ctx.post(path, { headers: this.headers(), data });
+    // Sales, returns and payments need an Idempotency-Key (one per intention). Every call here is a new intention.
+    const needsKey = /\/(complete|return)$|\/payments$/.test(path);
+    const headers = needsKey ? { ...this.headers(), "Idempotency-Key": randomUUID() } : this.headers();
+    const res = await this.ctx.post(path, { headers, data });
     if (expectOk) expect(res.ok(), `POST ${path} -> ${res.status()} ${await res.text()}`).toBeTruthy();
     const text = await res.text();
     return (text ? JSON.parse(text) : undefined) as R;
