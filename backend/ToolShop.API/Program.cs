@@ -223,6 +223,15 @@ if (MfaPolicy.EnforcementProblem(app.Configuration, app.Environment.EnvironmentN
 
 // --- Middleware pipeline ---
 
+// T2e: behind Nginx take the client address from X-Forwarded-For, trusted ONLY from the proxy's network (see ForwardedClientIp).
+// Off by default; the Docker deployment switches it on with ForwardedHeaders__Enabled=true. Rate limiting and the audit log read it.
+if (app.Configuration.GetValue("ForwardedHeaders:Enabled", false))
+{
+    var forwardedNetworkSetting = app.Configuration.GetSection("ForwardedHeaders:TrustedNetworks").Get<string[]>();
+    var trustedNetworks = forwardedNetworkSetting is { Length: > 0 } ? forwardedNetworkSetting : ForwardedClientIp.DefaultTrustedNetworks;
+    app.UseTrustedForwardedClientIp(ForwardedClientIp.ParseNetworks(trustedNetworks));
+}
+
 app.UseExceptionHandler();
 
 // Request id + structured request log (method, path WITHOUT query string, status, duration).
@@ -269,7 +278,7 @@ if (app.Environment.IsDevelopment())
 }
 
 // Behind Nginx (TLS terminated there) set Https:Redirect=false.
-// Forwarded headers: set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true in the container.
+// Client address behind Nginx: set ForwardedHeaders__Enabled=true (trusted proxy networks only, see UseTrustedForwardedClientIp above).
 if (app.Configuration.GetValue("Https:Redirect", true))
 {
     if (!app.Environment.IsDevelopment()) app.UseHsts();

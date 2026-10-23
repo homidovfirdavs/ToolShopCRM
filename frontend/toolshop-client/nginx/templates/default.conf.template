@@ -1,6 +1,6 @@
 server_tokens off;
 limit_req_zone $binary_remote_addr zone=api_rl:10m rate=20r/s;
-limit_req_zone $binary_remote_addr zone=auth_rl:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=auth_rl:10m rate=30r/m;
 limit_req_status 429;
 
 upstream toolshop_api {
@@ -52,7 +52,7 @@ server {
 
     # API; the API sets its own Cache-Control: no-store
     location /api/auth/ {
-        limit_req zone=auth_rl burst=10 nodelay;
+        limit_req zone=auth_rl burst=20 nodelay;
         include /etc/nginx/conf.d/security-headers.inc;
         include /etc/nginx/conf.d/proxy.inc;
     }

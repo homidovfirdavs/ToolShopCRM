@@ -35,6 +35,7 @@ chk "HTTPS serves the app" sh -c "curl -sk https://localhost:8443/ | grep -qi '<
 chk "HTTPS /health/live via nginx" sh -c "curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/health/live | grep -q 200"
 chk "/health/ready NOT public" sh -c "curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/health/ready | grep -q 404"
 chk "HSTS/CSP/nosniff headers" sh -c "curl -skI https://localhost:8443/ | grep -qi content-security-policy"
+chk "camera allowed for the app itself (barcode scanner)" sh -c "curl -skI https://localhost:8443/ | grep -i permissions-policy | grep -q 'camera=(self)'"
 chk "API reachable through nginx (401 without token)" sh -c "curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/products | grep -q 401"
 chk "PostgreSQL is NOT published on the host" sh -c "! docker compose $P port db 5432 | grep -q ."
 chk "API runs as non-root" sh -c "docker compose $P exec -T api id -u | grep -vq '^0$'"

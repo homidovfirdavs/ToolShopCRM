@@ -54,6 +54,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       Https__Redirect: "false"      # TLS ends at Nginx
+      # Real client address from Nginx's X-Forwarded-For, trusted only from private (Docker) networks; the API publishes no port.
+      ForwardedHeaders__Enabled: "true"
       ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=${DB_NAME:-toolshop_crm};Username=${APP_DB_USER:-toolshop_app};Password=${APP_DB_PASSWORD:?}
       Jwt__Key: ${JWT_KEY:?set JWT_KEY in deploy/.env}
       Jwt__Issuer: ${JWT_ISSUER:-toolshop-crm}

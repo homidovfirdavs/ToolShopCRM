@@ -22,9 +22,6 @@ public class AuthorizationGuardTests
         "HealthController.Get"
     ];
 
-    // SecurityController only holds the role-check demo endpoints; it is handled in T2e.
-    private static readonly HashSet<string> RoleNamesStillAllowedIn = ["SecurityController"];
-
     private static IEnumerable<Type> Controllers() =>
         typeof(Program).Assembly.GetTypes()
             .Where(t => !t.IsAbstract && typeof(ControllerBase).IsAssignableFrom(t));
@@ -37,7 +34,7 @@ public class AuthorizationGuardTests
     public void Access_rules_use_permission_policies_not_role_names()
     {
         var problems = new List<string>();
-        foreach (var c in Controllers().Where(c => !RoleNamesStillAllowedIn.Contains(c.Name)))
+        foreach (var c in Controllers())
         {
             foreach (var a in c.GetCustomAttributes<AuthorizeAttribute>(true).Where(a => !string.IsNullOrEmpty(a.Roles)))
                 problems.Add($"{c.Name} (class): Roles = \"{a.Roles}\"");
