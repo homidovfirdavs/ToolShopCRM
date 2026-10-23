@@ -264,6 +264,11 @@ public class AuthController : ControllerBase
         if (user.TwoFactorEnabled)
             return BadRequest(new { message = "MFA is already enabled for this user." });
 
+        return await StartMfaSetupAsync(user);
+    }
+
+    private async Task<IActionResult> StartMfaSetupAsync(ApplicationUser user)
+    {
         await _userManager.ResetAuthenticatorKeyAsync(user);
         var key = await _userManager.GetAuthenticatorKeyAsync(user);
         if (string.IsNullOrEmpty(key))
@@ -272,6 +277,122 @@ public class AuthController : ControllerBase
         var issuer = Uri.EscapeDataString(MfaIssuer);
         var uri = $"otpauth://totp/{issuer}:{Uri.EscapeDataString(user.UserName ?? user.Id)}?secret={key}&issuer={issuer}&digits=6";
         return Ok(new MfaSetupResponse { SharedKey = key, OtpAuthUri = uri });
+    }
+
+    // ---------- T2d.2: self-service for a signed-in user (optional MFA for Cashier / Warehouse, new codes for everyone) ----------
+
+    private async Task<ApplicationUser?> CurrentUserAsync()
+    {
+        var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (id is null) return null;
+        var user = await _userManager.FindByIdAsync(id);
+        return user is { IsActive: true } ? user : null;
+    }
+
+    [Authorize]
+    [EnableRateLimiting("auth")]
+    [HttpPost("mfa/self/setup")]
+    public async Task<IActionResult> MfaSelfSetup()
+    {
+        var user = await CurrentUserAsync();
+        if (user is null) return Unauthorized();
+        if (user.TwoFactorEnabled)
+            return BadRequest(new { message = "MFA is already enabled." });
+        return await StartMfaSetupAsync(user);
+    }
+
+    [Authorize]
+    [EnableRateLimiting("auth")]
+    [HttpPost("mfa/self/enable")]
+    public async Task<IActionResult> MfaSelfEnable([FromBody] MfaCodeRequest request)
+    {
+        var user = await CurrentUserAsync();
+        if (user is null) return Unauthorized();
+        if (user.TwoFactorEnabled)
+            return BadRequest(new { message = "MFA is already enabled." });
+        if (string.IsNullOrEmpty(await _userManager.GetAuthenticatorKeyAsync(user)))
+            return BadRequest(new { message = "Start the setup first." });
+        if (_mfaThrottle.IsBlocked(user.Id))
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { message = "Too many wrong codes. Try again in a few minutes." });
+
+        var valid = await _userManager.VerifyTwoFactorTokenAsync(
+            user, _userManager.Options.Tokens.AuthenticatorTokenProvider, DigitsOnly(request.Code));
+        if (!valid)
+        {
+            await RegisterMfaFailureAsync(user, "self setup");
+            return Unauthorized(new { message = "The code is not correct." });
+        }
+
+        _mfaThrottle.Reset(user.Id);
+        await _userManager.SetTwoFactorEnabledAsync(user, true);
+        var recoveryCodes = (await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10)) ?? [];
+        await _refreshTokenService.RevokeAllForUserAsync(user.Id);
+
+        var roles = await _userManager.GetRolesAsync(user);
+        var response = await CompleteMfaLoginAsync(user, roles);
+        response.RecoveryCodes = [.. recoveryCodes];
+        await TryAuditAsync(user, "Auth.MfaEnabled", $"MFA enabled by user '{user.UserName}' (self-service).");
+        return Ok(response);
+    }
+
+    [Authorize]
+    [EnableRateLimiting("auth")]
+    [HttpPost("mfa/self/disable")]
+    public async Task<IActionResult> MfaSelfDisable([FromBody] MfaDisableRequest request)
+    {
+        var user = await CurrentUserAsync();
+        if (user is null) return Unauthorized();
+        if (!user.TwoFactorEnabled)
+            return BadRequest(new { message = "MFA is not enabled." });
+
+        var roles = await _userManager.GetRolesAsync(user);
+        if (_mfaPolicy.IsRequiredFor(roles))
+            return BadRequest(new { message = "MFA is required for your role and cannot be switched off." });
+        if (_mfaThrottle.IsBlocked(user.Id))
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { message = "Too many wrong codes. Try again in a few minutes." });
+
+        var passwordOk = await _userManager.CheckPasswordAsync(user, request.Password);
+        var codeOk = passwordOk && await _userManager.VerifyTwoFactorTokenAsync(
+            user, _userManager.Options.Tokens.AuthenticatorTokenProvider, DigitsOnly(request.Code));
+        if (!passwordOk || !codeOk)
+        {
+            await RegisterMfaFailureAsync(user, "self disable");
+            return Unauthorized(new { message = "The password or the code is not correct." });
+        }
+
+        _mfaThrottle.Reset(user.Id);
+        await _userManager.SetTwoFactorEnabledAsync(user, false);
+        await _userManager.RemoveAuthenticationTokenAsync(user, "[AspNetUserStore]", "AuthenticatorKey");
+        await _userManager.RemoveAuthenticationTokenAsync(user, "[AspNetUserStore]", "RecoveryCodes");
+        await _refreshTokenService.RevokeAllForUserAsync(user.Id);
+        await TryAuditAsync(user, "Auth.MfaDisabled", $"MFA disabled by user '{user.UserName}'.");
+        return NoContent();
+    }
+
+    [Authorize]
+    [EnableRateLimiting("auth")]
+    [HttpPost("mfa/self/recovery-codes")]
+    public async Task<IActionResult> MfaSelfNewRecoveryCodes([FromBody] MfaCodeRequest request)
+    {
+        var user = await CurrentUserAsync();
+        if (user is null) return Unauthorized();
+        if (!user.TwoFactorEnabled)
+            return BadRequest(new { message = "MFA is not enabled." });
+        if (_mfaThrottle.IsBlocked(user.Id))
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { message = "Too many wrong codes. Try again in a few minutes." });
+
+        var valid = await _userManager.VerifyTwoFactorTokenAsync(
+            user, _userManager.Options.Tokens.AuthenticatorTokenProvider, DigitsOnly(request.Code));
+        if (!valid)
+        {
+            await RegisterMfaFailureAsync(user, "new recovery codes");
+            return Unauthorized(new { message = "The code is not correct." });
+        }
+
+        _mfaThrottle.Reset(user.Id);
+        var codes = (await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10)) ?? [];
+        await TryAuditAsync(user, "Auth.RecoveryCodesRegenerated", $"New recovery codes created for user '{user.UserName}'.");
+        return Ok(new MfaRecoveryCodesResponse { RecoveryCodes = [.. codes] });
     }
 
     [EnableRateLimiting("auth")]

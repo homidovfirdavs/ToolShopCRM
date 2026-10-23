@@ -29,6 +29,26 @@ public class MfaVerifyRequest : MfaTokenRequest
     public string? RecoveryCode { get; set; }
 }
 
+public class MfaCodeRequest
+{
+    [Required]
+    public string Code { get; set; } = string.Empty;
+}
+
+public class MfaDisableRequest
+{
+    [Required]
+    public string Password { get; set; } = string.Empty;
+
+    [Required]
+    public string Code { get; set; } = string.Empty;
+}
+
+public class MfaRecoveryCodesResponse
+{
+    public List<string> RecoveryCodes { get; set; } = [];
+}
+
 public class MfaSetupResponse
 {
     public string SharedKey { get; set; } = string.Empty;

@@ -11,6 +11,7 @@ public class UserListItemDto
     public string Role { get; set; } = string.Empty;
     public bool IsActive { get; set; }
     public bool IsLockedOut { get; set; }
+    public bool MfaEnabled { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

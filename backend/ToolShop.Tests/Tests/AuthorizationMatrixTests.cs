@@ -24,6 +24,10 @@ public class AuthorizationMatrixTests(ApiFactory factory) : TestBase(factory)
         ["POST api/auth/mfa/setup"] = "XAMCW",
         ["POST api/auth/mfa/enable"] = "XAMCW",
         ["POST api/auth/mfa/verify"] = "XAMCW",
+        ["POST api/auth/mfa/self/setup"] = "AMCW",
+        ["POST api/auth/mfa/self/enable"] = "AMCW",
+        ["POST api/auth/mfa/self/disable"] = "AMCW",
+        ["POST api/auth/mfa/self/recovery-codes"] = "AMCW",
         ["GET api/brands"] = "AMCW",
         ["GET api/brands/{id:int}"] = "AMCW",
         ["POST api/brands"] = "AM",
@@ -132,6 +136,7 @@ public class AuthorizationMatrixTests(ApiFactory factory) : TestBase(factory)
         ["POST api/users/{id}/deactivate"] = "A",
         ["POST api/users/{id}/activate"] = "A",
         ["POST api/users/{id}/reset-password"] = "A",
+        ["POST api/users/{id}/mfa/reset"] = "A",
     };
 
     private static readonly System.Text.RegularExpressions.Regex Param =

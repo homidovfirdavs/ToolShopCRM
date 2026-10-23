@@ -53,6 +53,7 @@ public class UsersController : ControllerBase
             Role = roles.FirstOrDefault() ?? string.Empty,
             IsActive = u.IsActive,
             IsLockedOut = u.LockoutEnd.HasValue && u.LockoutEnd.Value > DateTimeOffset.UtcNow,
+            MfaEnabled = u.TwoFactorEnabled,
             CreatedAt = u.CreatedAt
         };
     }
@@ -220,6 +221,29 @@ public class UsersController : ControllerBase
         }
 
         return Ok(await ToDtoAsync(user));
+    }
+
+    /// <summary>
+    /// A user lost the phone and the recovery codes: switch their MFA off so they set it up again at the next login.
+    /// An Admin cannot reset their own MFA (a stolen admin session must not be able to do that).
+    /// </summary>
+    [HttpPost("{id}/mfa/reset")]
+    public async Task<IActionResult> ResetMfa(string id)
+    {
+        var user = await _users.FindByIdAsync(id);
+        if (user is null) return Fail(404, "USER_NOT_FOUND", "User not found.");
+        if (user.Id == CurrentUserId)
+            return Fail(400, "CANNOT_RESET_OWN_MFA", "You cannot reset your own MFA. Use a recovery code or ask the owner to run Reset-AdminMfa.ps1.");
+
+        await _users.SetTwoFactorEnabledAsync(user, false);
+        await _users.RemoveAuthenticationTokenAsync(user, "[AspNetUserStore]", "AuthenticatorKey");
+        await _users.RemoveAuthenticationTokenAsync(user, "[AspNetUserStore]", "RecoveryCodes");
+        await RevokeRefreshTokensAsync(user.Id); // every existing session of that user ends
+
+        await _audit.LogAsync(CurrentUserId, "UserMfaReset", "User", user.Id,
+            $"MFA of user '{user.UserName}' was reset.", Ip);
+
+        return NoContent();
     }
 
     [HttpPost("{id}/reset-password")]
