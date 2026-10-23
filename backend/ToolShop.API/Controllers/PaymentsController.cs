@@ -1,5 +1,6 @@
 using ToolShop.Domain.Entities.Customers;
 using Microsoft.AspNetCore.Authorization;
+using ToolShop.Domain.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.API.DTOs.Catalog;
@@ -15,7 +16,7 @@ namespace ToolShop.API.Controllers;
 
 [ApiController]
 [Route("api/payments")]
-[Authorize(Roles = "Admin,Manager,Cashier")]
+[Authorize]
 public class PaymentsController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -89,6 +90,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = Permissions.SalesView)]
     public async Task<IActionResult> GetAll(
         [FromQuery] int? orderId,
         [FromQuery] int? customerId,
@@ -149,6 +151,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.SalesView)]
     public async Task<IActionResult> GetById(int id)
     {
         var payment = await _db.Payments.Include(p => p.Order).FirstOrDefaultAsync(p => p.Id == id);
@@ -169,7 +172,7 @@ public class PaymentsController : ControllerBase
     /// "Idempotent-Replay: true", nothing new is written or audited); the same key with a different request is 409.
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager,Cashier")]
+    [Authorize(Policy = Permissions.SalesCreate)]
     public async Task<IActionResult> Create([FromBody] CreatePaymentRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -241,7 +244,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPost("{id:int}/void")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.PaymentsVoid)]
     public async Task<IActionResult> Void(int id, [FromBody] VoidPaymentRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -274,6 +277,7 @@ public class PaymentsController : ControllerBase
         }
     }
         [HttpGet("~/api/debts")]
+        [Authorize(Policy = Permissions.SalesView)]
     public async Task<IActionResult> GetDebts(
         [FromQuery] string? search,
         [FromQuery] int page = 1,
@@ -361,7 +365,7 @@ public class PaymentsController : ControllerBase
     /// for the owner's separate decision. This endpoint never modifies, voids or deletes anything.
     /// </summary>
     [HttpGet("~/api/debts/walk-in-exceptions")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.DebtsWalkInExceptions)]
     public async Task<IActionResult> GetWalkInExceptions()
     {
         var walkInRows = await _db.Orders.AsNoTracking()

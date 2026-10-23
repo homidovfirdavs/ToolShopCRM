@@ -168,7 +168,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.PurchasesManage)]
     public async Task<IActionResult> Create([FromBody] CreatePurchaseRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -235,7 +235,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.PurchasesManage)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdatePurchaseRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -303,7 +303,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpPost("{id:int}/confirm")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.PurchasesConfirm)]
     public async Task<IActionResult> Confirm(int id)
     {
         try
@@ -336,7 +336,7 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpPost("{id:int}/cancel")]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.PurchasesManage)]
     public async Task<IActionResult> Cancel(int id)
     {
         var purchase = await _db.Purchases.FirstOrDefaultAsync(p => p.Id == id);
