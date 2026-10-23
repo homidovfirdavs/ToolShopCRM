@@ -64,6 +64,9 @@ $env:Jwt__Audience = "toolshop-e2e"
 $env:Https__Redirect = "false"
 $env:RateLimiting__AuthPermitPerMinute = "100000"
 $env:RateLimiting__GlobalPermitPerMinute = "1000000"
+# MFA is on by default for Admin/Manager. The E2E run uses a throw-away database (Testing) and logs in with a password only.
+# A role name nobody has switches it off here ("" would delete the variable on Windows).
+$env:Security__MfaRequiredRoles = "none"
 $env:AdminUser__Username = $e2eUser
 $env:AdminUser__Email = "$e2eUser@test.local"
 $env:AdminUser__Password = $e2ePass
@@ -137,7 +140,7 @@ finally {
     foreach ($n in "ConnectionStrings__DefaultConnection", "Jwt__Key", "AdminUser__Password", "E2E_ADMIN_PASSWORD",
                    "AdminUser__Username", "AdminUser__Email", "E2E_ADMIN_USER", "ASPNETCORE_ENVIRONMENT", "ASPNETCORE_URLS",
                    "Jwt__Issuer", "Jwt__Audience", "Https__Redirect", "RateLimiting__AuthPermitPerMinute",
-                   "RateLimiting__GlobalPermitPerMinute", "E2E_BASE_URL", "E2E_API_URL", "E2E_CHROMIUM_PATH") {
+                   "RateLimiting__GlobalPermitPerMinute", "Security__MfaRequiredRoles", "E2E_BASE_URL", "E2E_API_URL", "E2E_CHROMIUM_PATH") {
         Remove-Item "Env:\$n" -ErrorAction SilentlyContinue
     }
 }

@@ -215,6 +215,12 @@ ToolShop.Infrastructure.Finance.ReportingClock.Configure(
 
 var app = builder.Build();
 
+// T2d.4: outside Development/Testing the host refuses to start when Admin or Manager would not need MFA.
+if (MfaPolicy.EnforcementProblem(app.Configuration, app.Environment.EnvironmentName) is { } mfaProblem)
+{
+    throw new InvalidOperationException(mfaProblem);
+}
+
 // --- Middleware pipeline ---
 
 app.UseExceptionHandler();

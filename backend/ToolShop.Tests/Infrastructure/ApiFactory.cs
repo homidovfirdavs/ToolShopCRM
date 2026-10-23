@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -62,6 +63,10 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        // T2d.4: MFA is on by default for Admin/Manager. The shared test server keeps it off (tests log in with a password
+        // only); MfaTests start their own server with it on. An explicitly set empty value means "nobody".
+        builder.ConfigureAppConfiguration((_, cfg) =>
+            cfg.AddInMemoryCollection(new Dictionary<string, string?> { ["Security:MfaRequiredRoles"] = "" }));
         // Test diagnostics: remember unhandled server errors so a 500 in a test can show its real cause.
         builder.ConfigureLogging(l => l.AddProvider(new ErrorCaptureProvider()));
     }

@@ -45,6 +45,7 @@ function Check($Name, [bool]$Ok, $Detail = "") {
 # ---------- login ----------
 $login = Call "POST" "/auth/login" @{ usernameOrEmail = $User; password = $Password } $null
 if ($login.Status -ne 200) { throw "Login failed (HTTP $($login.Status))." }
+if ($login.Json.mfaRequired) { throw "This user must use MFA, so the script cannot sign in with a password only. Use a Cashier user for this check, or run it against a test API where Security__MfaRequiredRoles is switched off." }
 $script:Token = $login.Json.accessToken
 
 # ---------- fixtures ----------
