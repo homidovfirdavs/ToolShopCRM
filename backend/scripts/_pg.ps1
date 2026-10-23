@@ -35,7 +35,11 @@ function Initialize-PgPassword {
 
 function Invoke-PgQuery {
     param([string]$Psql, [string]$PgHost, [int]$Port, [string]$User, [string]$Database, [string]$Sql)
-    $out = & $Psql -h $PgHost -p $Port -U $User -d $Database -X -A -t -v ON_ERROR_STOP=1 -c $Sql 2>&1
+    # SQL goes through stdin: Windows PowerShell 5.1 strips double quotes from native-command arguments,
+    # which broke quoted identifiers such as public."AspNetRoleClaims".
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $out = $Sql | & $Psql -h $PgHost -p $Port -U $User -d $Database -X -A -t -v ON_ERROR_STOP=1 -f - 2>&1 }
+    finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { throw "psql failed on '$Database': $($out -join ' ')" }
     return @($out | ForEach-Object { "$_".Trim() } | Where-Object { $_ -ne '' })
 }
