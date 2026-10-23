@@ -16,7 +16,8 @@ namespace ToolShop.Tests.Tests;
 public class ReturnFinanceTests(ApiFactory factory) : TestBase(factory)
 {
     private static string Range(int fromDays, int toDays) =>
-        $"from={DateTime.UtcNow.Date.AddDays(fromDays):yyyy-MM-dd}&to={DateTime.UtcNow.Date.AddDays(toDays):yyyy-MM-dd}";
+        // Report days are shop-local days (UTC+5): between 19:00 and 24:00 UTC the local date is already the next day.
+        $"from={ToolShop.Infrastructure.Finance.ReportingClock.LocalToday().AddDays(fromDays):yyyy-MM-dd}&to={ToolShop.Infrastructure.Finance.ReportingClock.LocalToday().AddDays(toDays):yyyy-MM-dd}";
 
     private Task<JsonElement> SummaryAsync(int fromDays, int toDays) => GetJsonAsync($"/api/finance/summary?{Range(fromDays, toDays)}");
 
