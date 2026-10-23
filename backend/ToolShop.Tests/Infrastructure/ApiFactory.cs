@@ -54,6 +54,10 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("Https__Redirect", "false");
         Environment.SetEnvironmentVariable("RateLimiting__AuthPermitPerMinute", "100000");
         Environment.SetEnvironmentVariable("RateLimiting__GlobalPermitPerMinute", "1000000");
+        // Cash shifts are exercised by the tests (the test database has the tables). RequireOpenShift stays off here; the
+        // tests that need it switch it on for their own duration through CashShiftOptions.
+        Environment.SetEnvironmentVariable("CashShifts__Enabled", "true");
+        Environment.SetEnvironmentVariable("CashShifts__RequireOpenShift", "false");
         // Make sure the dev admin seeder is skipped; the tests create their own users.
         Environment.SetEnvironmentVariable("AdminUser__Username", "");
         Environment.SetEnvironmentVariable("AdminUser__Email", "");
@@ -156,6 +160,10 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public Task ResetDataAsync() => WithDbAsync(async db =>
     {
         await db.IdempotencyRecords.ExecuteDeleteAsync(); // keys of money operations (no foreign keys)
+        await db.CashShiftReturns.ExecuteDeleteAsync();   // cash-shift links reference payments / returns / shifts (Restrict)
+        await db.CashShiftPayments.ExecuteDeleteAsync();
+        await db.CashMovements.ExecuteDeleteAsync();
+        await db.CashShifts.ExecuteDeleteAsync();         // the drawer itself (CashRegisters) is kept, like users and roles
         await db.OrderReturnItems.ExecuteDeleteAsync();   // ledger rows reference orders (Restrict) - delete first
         await db.OrderReturns.ExecuteDeleteAsync();
         await db.Payments.ExecuteDeleteAsync();

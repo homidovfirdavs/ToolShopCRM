@@ -22,6 +22,8 @@ namespace ToolShop.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.HasSequence("cash_shift_number_seq");
+
             modelBuilder.HasSequence("return_number_seq");
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
@@ -261,6 +263,227 @@ namespace ToolShop.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("AuditLogs");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashMovement", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("CashShiftId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<int?>("ExpenseId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsVoided")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("VoidReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("VoidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VoidedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CashShiftId");
+
+                    b.HasIndex("ExpenseId");
+
+                    b.ToTable("CashMovements", t =>
+                        {
+                            t.HasCheckConstraint("CK_CashMovements_Amount", "\"Amount\" > 0");
+                        });
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashRegister", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("CashRegisters");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashShift", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal?>("CashDifference")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("CashRegisterId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CashierUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("CloseNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("ClosedByOther")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ClosedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<decimal?>("ClosingCash")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal?>("ExpectedCashAtClose")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("OpenedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OpenedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<decimal>("OpeningCash")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<bool>("RequiresReview")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ReviewNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReviewedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("ShiftNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CashRegisterId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CashShifts_OneOpenPerRegister")
+                        .HasFilter("\"Status\" = 1");
+
+                    b.HasIndex("CashierUserId");
+
+                    b.HasIndex("OpenedAt");
+
+                    b.HasIndex("ShiftNumber")
+                        .IsUnique();
+
+                    b.ToTable("CashShifts", t =>
+                        {
+                            t.HasCheckConstraint("CK_CashShifts_Closed", "\"Status\" = 1 OR (\"ClosedAt\" IS NOT NULL AND \"ClosingCash\" IS NOT NULL AND \"ExpectedCashAtClose\" IS NOT NULL AND \"CashDifference\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_CashShifts_OpeningCash", "\"OpeningCash\" >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashShiftPayment", b =>
+                {
+                    b.Property<int>("PaymentId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("CashShiftId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("PaymentId");
+
+                    b.HasIndex("CashShiftId");
+
+                    b.ToTable("CashShiftPayments");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashShiftReturn", b =>
+                {
+                    b.Property<int>("OrderReturnId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("CashShiftId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("OrderReturnId");
+
+                    b.HasIndex("CashShiftId");
+
+                    b.ToTable("CashShiftReturns");
                 });
 
             modelBuilder.Entity("ToolShop.Domain.Entities.Catalog.Brand", b =>
@@ -1227,6 +1450,73 @@ namespace ToolShop.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashMovement", b =>
+                {
+                    b.HasOne("ToolShop.Domain.Entities.Cash.CashShift", "CashShift")
+                        .WithMany("Movements")
+                        .HasForeignKey("CashShiftId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ToolShop.Domain.Entities.Finance.Expense", "Expense")
+                        .WithMany()
+                        .HasForeignKey("ExpenseId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("CashShift");
+
+                    b.Navigation("Expense");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashShift", b =>
+                {
+                    b.HasOne("ToolShop.Domain.Entities.Cash.CashRegister", "CashRegister")
+                        .WithMany()
+                        .HasForeignKey("CashRegisterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CashRegister");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashShiftPayment", b =>
+                {
+                    b.HasOne("ToolShop.Domain.Entities.Cash.CashShift", "CashShift")
+                        .WithMany()
+                        .HasForeignKey("CashShiftId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ToolShop.Domain.Entities.Payments.Payment", "Payment")
+                        .WithMany()
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CashShift");
+
+                    b.Navigation("Payment");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashShiftReturn", b =>
+                {
+                    b.HasOne("ToolShop.Domain.Entities.Cash.CashShift", "CashShift")
+                        .WithMany()
+                        .HasForeignKey("CashShiftId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ToolShop.Domain.Entities.Sales.OrderReturn", "OrderReturn")
+                        .WithMany()
+                        .HasForeignKey("OrderReturnId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CashShift");
+
+                    b.Navigation("OrderReturn");
+                });
+
             modelBuilder.Entity("ToolShop.Domain.Entities.Catalog.Product", b =>
                 {
                     b.HasOne("ToolShop.Domain.Entities.Catalog.Brand", "Brand")
@@ -1381,6 +1671,11 @@ namespace ToolShop.Infrastructure.Migrations
                     b.Navigation("OrderReturn");
 
                     b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("ToolShop.Domain.Entities.Cash.CashShift", b =>
+                {
+                    b.Navigation("Movements");
                 });
 
             modelBuilder.Entity("ToolShop.Domain.Entities.Purchases.Purchase", b =>

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using ToolShop.Domain.Entities.Idempotency;
 using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Sales;
+using ToolShop.Infrastructure.Cash;
 using ToolShop.Infrastructure.Persistence;
 using ToolShop.Infrastructure.Sales;
 
@@ -42,10 +43,12 @@ public class VoidWouldDropBelowRefundedException(decimal refunded)
 public class PaymentService
 {
     private readonly AppDbContext _db;
+    private readonly CashShiftOptions _cash;
 
-    public PaymentService(AppDbContext db)
+    public PaymentService(AppDbContext db, CashShiftOptions cash)
     {
         _db = db;
+        _cash = cash;
     }
 
     public async Task<decimal> GetOrderOutstandingBalanceAsync(int orderId)
@@ -187,6 +190,7 @@ public class PaymentService
                 };
 
                 _db.Payments.Add(payment);
+                await CashShiftLinker.AttachPaymentAsync(_db, _cash, payment); // which shift took the money (no-op while the feature is off)
                 await _db.SaveChangesAsync();
 
                 idem.ResultEntityId = payment.Id;

@@ -88,9 +88,12 @@ public class OrderService
         InventoryMovementType.PurchaseReturn
     ];
 
-    public OrderService(AppDbContext db)
+    private readonly ToolShop.Infrastructure.Cash.CashShiftOptions _cash;
+
+    public OrderService(AppDbContext db, ToolShop.Infrastructure.Cash.CashShiftOptions cash)
     {
         _db = db;
+        _cash = cash;
     }
 
     private static int CalculateStock(IEnumerable<(InventoryMovementType Type, int Quantity)> movements)
@@ -354,7 +357,7 @@ public async Task<OrderCompleteResult> CompleteAsync(
 
                 if (initialPayment is not null)
                 {
-                    _db.Payments.Add(new Payment
+                    var firstPayment = new Payment
                     {
                         PaymentNumber = await PaymentNumberGenerator.GenerateAsync(_db),
                         OrderId = order.Id,
@@ -366,7 +369,9 @@ public async Task<OrderCompleteResult> CompleteAsync(
                         Notes = initialPayment.Notes,
                         ReceivedByUserId = userId,
                         CreatedAt = DateTime.UtcNow
-                    });
+                    };
+                    _db.Payments.Add(firstPayment);
+                    await ToolShop.Infrastructure.Cash.CashShiftLinker.AttachPaymentAsync(_db, _cash, firstPayment);
                 }
 
                 idem.ResultEntityId = order.Id;
@@ -629,6 +634,7 @@ public async Task<OrderCompleteResult> CompleteAsync(
 
                 order.Status = fullyReturned ? OrderStatus.Returned : OrderStatus.PartiallyReturned;
                 _db.OrderReturns.Add(ledger);
+                await ToolShop.Infrastructure.Cash.CashShiftLinker.AttachReturnAsync(_db, _cash, ledger); // which shift paid the refund (no-op while off)
 
                 await _db.SaveChangesAsync();
 

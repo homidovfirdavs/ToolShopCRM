@@ -9,6 +9,7 @@ using ToolShop.Domain.Entities.Sales;
 using ToolShop.Domain.Entities.Idempotency;
 using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Finance;
+using ToolShop.Domain.Entities.Cash;
 namespace ToolShop.Infrastructure.Persistence;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
@@ -39,6 +40,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
     public DbSet<Expense> Expenses => Set<Expense>();
+
+    public DbSet<CashRegister> CashRegisters => Set<CashRegister>();
+    public DbSet<CashShift> CashShifts => Set<CashShift>();
+    public DbSet<CashMovement> CashMovements => Set<CashMovement>();
+    public DbSet<CashShiftPayment> CashShiftPayments => Set<CashShiftPayment>();
+    public DbSet<CashShiftReturn> CashShiftReturns => Set<CashShiftReturn>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -353,6 +360,108 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 t.HasCheckConstraint("CK_OrderReturnItems_Split", "\"RestockedQuantity\" >= 0 AND \"WrittenOffQuantity\" >= 0 AND \"RestockedQuantity\" + \"WrittenOffQuantity\" = \"Quantity\"");
                 t.HasCheckConstraint("CK_OrderReturnItems_NetValue", "\"NetValue\" >= 0");
             });
+        });
+
+        // Cash shifts (Phase B). New tables only: Payments / Orders / Expenses are not changed.
+        builder.HasSequence<long>("cash_shift_number_seq");
+
+        builder.Entity<CashRegister>(entity =>
+        {
+            entity.Property(r => r.Name).HasMaxLength(100).IsRequired();
+            entity.HasIndex(r => r.Name).IsUnique();
+        });
+
+        builder.Entity<CashShift>(entity =>
+        {
+            entity.Property(s => s.ShiftNumber).HasMaxLength(20).IsRequired();
+            entity.Property(s => s.CashierUserId).HasMaxLength(450).IsRequired();
+            entity.Property(s => s.OpenedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(s => s.ClosedByUserId).HasMaxLength(450);
+            entity.Property(s => s.ReviewedByUserId).HasMaxLength(450);
+            entity.Property(s => s.OpeningCash).HasPrecision(18, 2);
+            entity.Property(s => s.ClosingCash).HasPrecision(18, 2);
+            entity.Property(s => s.ExpectedCashAtClose).HasPrecision(18, 2);
+            entity.Property(s => s.CashDifference).HasPrecision(18, 2);
+            entity.Property(s => s.CloseNote).HasMaxLength(1000);
+            entity.Property(s => s.ReviewNote).HasMaxLength(1000);
+
+            entity.HasIndex(s => s.ShiftNumber).IsUnique();
+            entity.HasIndex(s => s.CashierUserId);
+            entity.HasIndex(s => s.OpenedAt);
+
+            // The database itself refuses a second OPEN shift on the same drawer (Status 1 = Open).
+            entity.HasIndex(s => s.CashRegisterId)
+                .IsUnique()
+                .HasFilter("\"Status\" = 1")
+                .HasDatabaseName("UX_CashShifts_OneOpenPerRegister");
+
+            entity.HasOne(s => s.CashRegister)
+                .WithMany()
+                .HasForeignKey(s => s.CashRegisterId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_CashShifts_OpeningCash", "\"OpeningCash\" >= 0");
+                t.HasCheckConstraint("CK_CashShifts_Closed",
+                    "\"Status\" = 1 OR (\"ClosedAt\" IS NOT NULL AND \"ClosingCash\" IS NOT NULL AND \"ExpectedCashAtClose\" IS NOT NULL AND \"CashDifference\" IS NOT NULL)");
+            });
+        });
+
+        builder.Entity<CashMovement>(entity =>
+        {
+            entity.Property(m => m.Amount).HasPrecision(18, 2);
+            entity.Property(m => m.Reason).HasMaxLength(500).IsRequired();
+            entity.Property(m => m.CreatedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(m => m.VoidedByUserId).HasMaxLength(450);
+            entity.Property(m => m.VoidReason).HasMaxLength(500);
+
+            entity.HasIndex(m => m.CashShiftId);
+            entity.HasIndex(m => m.ExpenseId);
+
+            entity.HasOne(m => m.CashShift)
+                .WithMany(s => s.Movements)
+                .HasForeignKey(m => m.CashShiftId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(m => m.Expense)
+                .WithMany()
+                .HasForeignKey(m => m.ExpenseId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.ToTable(t => t.HasCheckConstraint("CK_CashMovements_Amount", "\"Amount\" > 0"));
+        });
+
+        builder.Entity<CashShiftPayment>(entity =>
+        {
+            entity.HasKey(l => l.PaymentId);
+            entity.HasIndex(l => l.CashShiftId);
+
+            entity.HasOne(l => l.Payment)
+                .WithMany()
+                .HasForeignKey(l => l.PaymentId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(l => l.CashShift)
+                .WithMany()
+                .HasForeignKey(l => l.CashShiftId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<CashShiftReturn>(entity =>
+        {
+            entity.HasKey(l => l.OrderReturnId);
+            entity.HasIndex(l => l.CashShiftId);
+
+            entity.HasOne(l => l.OrderReturn)
+                .WithMany()
+                .HasForeignKey(l => l.OrderReturnId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(l => l.CashShift)
+                .WithMany()
+                .HasForeignKey(l => l.CashShiftId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // Identity table-ҳо (AspNetUsers, AspNetRoles, ...) худкор
