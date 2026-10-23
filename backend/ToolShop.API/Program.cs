@@ -170,7 +170,13 @@ builder.Services.AddAuthentication(options =>
                 var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
                 var active = userId is not null &&
                     await db.Users.AsNoTracking().AnyAsync(u => u.Id == userId && u.IsActive);
-                if (!active) context.Fail("User is inactive or no longer exists.");
+                if (!active) { context.Fail("User is inactive or no longer exists."); return; }
+
+                // T2d: a role that must use MFA is only accepted with a token issued after the second factor.
+                var roles = context.Principal!.FindAll(System.Security.Claims.ClaimTypes.Role).Select(c => c.Value);
+                var mfaPolicy = context.HttpContext.RequestServices.GetRequiredService<MfaPolicy>();
+                if (mfaPolicy.IsRequiredFor(roles) && context.Principal.FindFirst(TokenService.MfaClaimType)?.Value != "true")
+                    context.Fail("A second factor is required for this role.");
             }
         };
     });
@@ -189,6 +195,8 @@ builder.Services.AddAuthorization(options =>
 
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<RefreshTokenService>();
+builder.Services.AddScoped<MfaPolicy>();
+builder.Services.AddSingleton<MfaThrottle>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Audit.AuditService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Inventory.InventoryService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Purchases.PurchaseService>();

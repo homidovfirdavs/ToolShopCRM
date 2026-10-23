@@ -16,6 +16,9 @@ public class AuthorizationGuardTests
         "AuthController.Login",
         "AuthController.Refresh",
         "AuthController.Logout",
+        "AuthController.MfaSetup",    // T2d: proven by the short-lived MFA session token, not by a bearer token
+        "AuthController.MfaEnable",
+        "AuthController.MfaVerify",
         "HealthController.Get"
     ];
 

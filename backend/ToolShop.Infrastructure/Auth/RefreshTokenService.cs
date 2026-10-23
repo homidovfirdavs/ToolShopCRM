@@ -99,6 +99,15 @@ public class RefreshTokenService
         return (true, existing.UserId, newRawToken);
     }
 
+    /// <summary>Ends every active session of one user (used when MFA is switched on or reset).</summary>
+    public async Task RevokeAllForUserAsync(string userId)
+    {
+        var now = DateTime.UtcNow;
+        await _db.RefreshTokens
+            .Where(rt => rt.UserId == userId && rt.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(rt => rt.RevokedAt, (DateTime?)now));
+    }
+
     public async Task RevokeAsync(string rawToken)
     {
         var tokenHash = _tokenService.HashToken(rawToken);
