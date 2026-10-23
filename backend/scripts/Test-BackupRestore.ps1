@@ -6,6 +6,7 @@
   4. drops the disposable database (unless -KeepRestored)
 
  Stop writes to the source (close the app) while it runs, otherwise counts may differ legitimately.
+ With -ExistingBackup <file> step 1 is skipped and THAT file is restored and compared (counts may differ if the source changed since).
  Prints PASS only if every table matches. Exit code 0 = PASS, 1 = FAIL.
 #>
 param(
@@ -15,6 +16,7 @@ param(
     [string]$Database = 'toolshop_crm',
     [string]$RestoreDatabase,
     [string]$OutDir,
+    [string]$ExistingBackup,
     [string]$PgBinPath,
     [switch]$KeepRestored
 )
@@ -34,7 +36,13 @@ try {
     $backupArgs = $common.Clone(); $backupArgs.Database = $Database
     if ($OutDir) { $backupArgs.OutDir = $OutDir }
 
-    $file = & "$PSScriptRoot\Backup-Database.ps1" @backupArgs | Select-Object -Last 1
+    if ($ExistingBackup) {
+        # test a backup that already exists (for example the nightly -auto- file) instead of making a new one
+        $file = (Resolve-Path -LiteralPath $ExistingBackup).Path
+    }
+    else {
+        $file = & "$PSScriptRoot\Backup-Database.ps1" @backupArgs | Select-Object -Last 1
+    }
     if (-not $file -or -not (Test-Path $file)) { throw 'Backup did not produce a file.' }
 
     $restoreArgs = $common.Clone()
