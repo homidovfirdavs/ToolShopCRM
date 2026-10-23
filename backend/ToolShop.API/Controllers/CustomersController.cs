@@ -1,6 +1,7 @@
 using ToolShop.Domain.Entities.Payments;
 using ToolShop.Domain.Entities.Sales;
 using Microsoft.AspNetCore.Authorization;
+using ToolShop.Domain.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.API.DTOs.Catalog;
@@ -14,7 +15,7 @@ namespace ToolShop.API.Controllers;
 
 [ApiController]
 [Route("api/customers")]
-[Authorize(Roles = "Admin,Manager,Cashier")]
+[Authorize]
 public class CustomersController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -53,6 +54,7 @@ public class CustomersController : ControllerBase
         User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
 
     [HttpGet]
+    [Authorize(Policy = Permissions.CustomersView)]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
         [FromQuery] bool? isActive,
@@ -111,6 +113,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.CustomersView)]
     public async Task<IActionResult> GetById(int id)
     {
         var customer = await _db.Customers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id);
@@ -124,7 +127,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager,Cashier")]
+    [Authorize(Policy = Permissions.CustomersManage)]
     public async Task<IActionResult> Create([FromBody] CreateCustomerRequest request)
     {
         if (!ModelState.IsValid)
@@ -166,7 +169,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Manager,Cashier")]
+    [Authorize(Policy = Permissions.CustomersManage)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateCustomerRequest request)
     {
         if (!ModelState.IsValid)
@@ -210,7 +213,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.CustomersDeactivate)]
     public async Task<IActionResult> Deactivate(int id)
     {
         var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == id);
@@ -230,6 +233,7 @@ public class CustomersController : ControllerBase
         return NoContent();
     }
     [HttpGet("{id:int}/orders")]
+    [Authorize(Policy = Permissions.CustomersView)]
     public async Task<IActionResult> GetOrders(int id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         var customerExists = await _db.Customers.AnyAsync(c => c.Id == id);
@@ -262,6 +266,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("{id:int}/payments")]
+    [Authorize(Policy = Permissions.CustomersView)]
     public async Task<IActionResult> GetPayments(int id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         var customerExists = await _db.Customers.AnyAsync(c => c.Id == id);
@@ -301,6 +306,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("{id:int}/outstanding-orders")]
+    [Authorize(Policy = Permissions.CustomersView)]
     public async Task<IActionResult> GetOutstandingOrders(int id, [FromServices] Infrastructure.Payments.PaymentService paymentService)
     {
         var customerExists = await _db.Customers.AnyAsync(c => c.Id == id);

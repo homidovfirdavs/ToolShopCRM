@@ -145,7 +145,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.SuppliersManage)]
     public async Task<IActionResult> Create([FromBody] CreateSupplierRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -172,7 +172,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.SuppliersManage)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateSupplierRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -198,7 +198,7 @@ public class SuppliersController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.SuppliersDeactivate)]
     public async Task<IActionResult> Deactivate(int id)
     {
         var supplier = await _db.Suppliers.FirstOrDefaultAsync(s => s.Id == id);
