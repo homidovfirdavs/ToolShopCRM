@@ -12,6 +12,7 @@ const updateUser = vi.fn();
 const deactivateUser = vi.fn();
 const activateUser = vi.fn();
 const resetUserPassword = vi.fn();
+const resetUserMfa = vi.fn();
 
 vi.mock("../api/users", () => ({
   USER_ROLES: ["Admin", "Manager", "Cashier", "Warehouse"],
@@ -21,6 +22,7 @@ vi.mock("../api/users", () => ({
   deactivateUser: (...a: unknown[]) => deactivateUser(...a),
   activateUser: (...a: unknown[]) => activateUser(...a),
   resetUserPassword: (...a: unknown[]) => resetUserPassword(...a),
+  resetUserMfa: (...a: unknown[]) => resetUserMfa(...a),
 }));
 vi.mock("../context/AuthContext", () => ({
   useAuth: () => ({ user: { id: "me", username: "admin", fullName: "Admin", email: "a@x", roles: ["Admin"] } }),
@@ -34,13 +36,14 @@ const user = (over: Record<string, unknown> = {}) => ({
   role: "Cashier",
   isActive: true,
   isLockedOut: false,
+  mfaEnabled: false,
   createdAt: "2026-10-01T10:00:00Z",
   ...over,
 });
 
 const list = () => [
-  user({ id: "me", username: "admin", fullName: "Admin", role: "Admin" }),
-  user(),
+  user({ id: "me", username: "admin", fullName: "Admin", role: "Admin", mfaEnabled: true }),
+  user({ mfaEnabled: true }),
   user({ id: "u2", username: "old1", fullName: "Old One", role: "Warehouse", isActive: false }),
 ];
 
@@ -48,7 +51,7 @@ const row = (username: string) => screen.getByTestId(`user-row-${username}`);
 
 describe("UsersPage", () => {
   beforeEach(() => {
-    [getUsers, createUser, updateUser, deactivateUser, activateUser, resetUserPassword].forEach((m) => m.mockReset());
+    [getUsers, createUser, updateUser, deactivateUser, activateUser, resetUserPassword, resetUserMfa].forEach((m) => m.mockReset());
     getUsers.mockResolvedValue(list());
   });
 
@@ -167,6 +170,34 @@ describe("UsersPage", () => {
     await ev.type(input, "Another-Pass2");
     await ev.click(within(dialog).getByRole("button", { name: T("common.save") }));
     await waitFor(() => expect(resetUserPassword).toHaveBeenCalledWith("u1", "Another-Pass2"));
+  });
+});
+
+describe("UsersPage MFA", () => {
+  beforeEach(() => {
+    [getUsers, resetUserMfa].forEach((m) => m.mockReset());
+    getUsers.mockResolvedValue(list());
+  });
+
+  it("shows the MFA state; Reset MFA is offered for other users with MFA, never for yourself", async () => {
+    renderApp(<UsersPage />);
+    await screen.findByText("cashier1");
+    expect(within(row("cashier1")).getByText(T("users.mfaOn"))).toBeInTheDocument();
+    expect(within(row("old1")).getByText(T("users.mfaOff"))).toBeInTheDocument();
+    expect(within(row("cashier1")).getByRole("button", { name: T("users.mfaReset") })).toBeInTheDocument();
+    expect(within(row("admin")).queryByRole("button", { name: T("users.mfaReset") })).not.toBeInTheDocument();
+    expect(within(row("old1")).queryByRole("button", { name: T("users.mfaReset") })).not.toBeInTheDocument();
+  });
+
+  it("Reset MFA asks for confirmation first, then calls the API", async () => {
+    const ev = userEvent.setup();
+    resetUserMfa.mockResolvedValue(undefined);
+    renderApp(<UsersPage />);
+    await screen.findByText("cashier1");
+    await ev.click(within(row("cashier1")).getByRole("button", { name: T("users.mfaReset") }));
+    expect(resetUserMfa).not.toHaveBeenCalled();
+    await ev.click(within(screen.getByRole("dialog")).getByRole("button", { name: T("users.mfaReset") }));
+    await waitFor(() => expect(resetUserMfa).toHaveBeenCalledWith("u1"));
   });
 });
 

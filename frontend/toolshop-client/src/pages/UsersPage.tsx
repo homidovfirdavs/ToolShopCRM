@@ -4,6 +4,7 @@ import {
   createUser,
   deactivateUser,
   getUsers,
+  resetUserMfa,
   resetUserPassword,
   updateUser,
   USER_ROLES,
@@ -34,6 +35,7 @@ const KNOWN_ERRORS = [
   "CANNOT_CHANGE_OWN_ROLE",
   "LAST_ADMIN",
   "INVALID_ROLE",
+  "CANNOT_RESET_OWN_MFA",
 ];
 
 type Dialog =
@@ -41,6 +43,7 @@ type Dialog =
   | { kind: "edit"; user: ManagedUser }
   | { kind: "reset"; user: ManagedUser }
   | { kind: "deactivate"; user: ManagedUser }
+  | { kind: "mfaReset"; user: ManagedUser }
   | null;
 
 export default function UsersPage() {
@@ -139,6 +142,11 @@ export default function UsersPage() {
     void run(() => deactivateUser(dialog.user.id), t("common.deactivated"));
   }
 
+  function submitMfaReset() {
+    if (dialog?.kind !== "mfaReset") return;
+    void run(() => resetUserMfa(dialog.user.id), t("users.mfaResetDone"));
+  }
+
   async function handleActivate(u: ManagedUser) {
     try {
       await activateUser(u.id);
@@ -180,6 +188,7 @@ export default function UsersPage() {
                   <th className={thClass}>{t("users.email")}</th>
                   <th className={thClass}>{t("users.role")}</th>
                   <th className={thClass}>{t("common.status")}</th>
+                  <th className={thClass}>{t("users.mfa")}</th>
                   <th className={thClass}>{t("common.created")}</th>
                   <th className={thClass}>{t("common.actions")}</th>
                 </tr>
@@ -207,6 +216,12 @@ export default function UsersPage() {
                           {u.isLockedOut && <StatusBadge label={t("users.lockedOut")} tone="red" />}
                         </div>
                       </td>
+                      <td className={tdClass}>
+                        <StatusBadge
+                          label={u.mfaEnabled ? t("users.mfaOn") : t("users.mfaOff")}
+                          tone={u.mfaEnabled ? "green" : "gray"}
+                        />
+                      </td>
                       <td className={tdClass}>{formatDate(u.createdAt)}</td>
                       <td className={tdClass}>
                         <div className="flex flex-wrap gap-2">
@@ -216,6 +231,11 @@ export default function UsersPage() {
                           <Button size="sm" variant="secondary" onClick={() => open({ kind: "reset", user: u })}>
                             {t("users.resetPassword")}
                           </Button>
+                          {u.mfaEnabled && !isMe && (
+                            <Button size="sm" variant="secondary" onClick={() => open({ kind: "mfaReset", user: u })}>
+                              {t("users.mfaReset")}
+                            </Button>
+                          )}
                           {u.isActive && !isMe && (
                             <Button
                               size="sm"
@@ -346,6 +366,23 @@ export default function UsersPage() {
           {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={dialog?.kind === "mfaReset"}
+        title={t("users.mfaReset")}
+        message={
+          <>
+            <p>{dialog?.kind === "mfaReset" ? dialog.user.username : ""}</p>
+            <p className="mt-1">{t("users.mfaResetConfirm")}</p>
+            {formError && <p role="alert" className="mt-2 text-red-600">{formError}</p>}
+          </>
+        }
+        confirmLabel={t("users.mfaReset")}
+        danger
+        loading={busy}
+        onConfirm={submitMfaReset}
+        onCancel={close}
+      />
 
       <ConfirmDialog
         open={dialog?.kind === "deactivate"}

@@ -7,6 +7,7 @@ import {
 } from "react";
 import apiClient, { setAuthToken } from "../api/client";
 import { errorStatus } from "../lib/apiError";
+import { submitMfaEnable, submitMfaVerify, type MfaChallenge, type MfaCodeInput } from "../api/mfa";
 
 interface UserInfo {
   id: string;
@@ -20,7 +21,11 @@ interface AuthContextType {
   user: UserInfo | null;
   accessToken: string | null;
   isLoading: boolean;
-  login: (usernameOrEmail: string, password: string) => Promise<void>;
+  /** Resolves to a challenge when a second factor is needed (no session yet), otherwise null (signed in). */
+  login: (usernameOrEmail: string, password: string) => Promise<MfaChallenge | null>;
+  verifyMfa: (mfaToken: string, input: MfaCodeInput) => Promise<void>;
+  /** Enables MFA. The session starts only when finish() is called, after the user has saved the recovery codes. */
+  enableMfa: (mfaToken: string, code: string) => Promise<{ recoveryCodes: string[]; finish: () => void }>;
   logout: () => Promise<void>;
 }
 
@@ -72,17 +77,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
   }, []);
 
-  async function login(usernameOrEmail: string, password: string) {
+  function applySession(data: { accessToken: string; refreshToken: string; user: UserInfo }) {
+    setAccessToken(data.accessToken);
+    setAuthToken(data.accessToken);
+    setUser(data.user);
+    sessionStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+  }
+
+  async function login(usernameOrEmail: string, password: string): Promise<MfaChallenge | null> {
     const response = await apiClient.post("/auth/login", {
       usernameOrEmail,
       password,
     });
 
-    const { accessToken, refreshToken, user } = response.data;
-       setAccessToken(accessToken);
-    setAuthToken(accessToken);
-    setUser(user);
-    sessionStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    if (response.data?.mfaRequired === true) {
+      return { mfaToken: response.data.mfaToken, setupRequired: response.data.mfaSetupRequired === true };
+    }
+
+    applySession(response.data);
+    return null;
+  }
+
+  async function verifyMfa(mfaToken: string, input: MfaCodeInput) {
+    applySession(await submitMfaVerify(mfaToken, input));
+  }
+
+  async function enableMfa(mfaToken: string, code: string) {
+    const data = await submitMfaEnable(mfaToken, code);
+    return {
+      recoveryCodes: (data.recoveryCodes ?? []) as string[],
+      finish: () => applySession(data),
+    };
   }
 
   async function logout() {
@@ -106,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, accessToken, isLoading, login, logout }}
+      value={{ user, accessToken, isLoading, login, verifyMfa, enableMfa, logout }}
     >
       {children}
     </AuthContext.Provider>

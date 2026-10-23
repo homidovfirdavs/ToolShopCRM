@@ -12,6 +12,7 @@ export interface ManagedUser {
   role: string;
   isActive: boolean;
   isLockedOut: boolean;
+  mfaEnabled: boolean;
   createdAt: string;
 }
 
@@ -56,4 +57,8 @@ export async function activateUser(id: string): Promise<ManagedUser> {
 
 export async function resetUserPassword(id: string, newPassword: string): Promise<void> {
   await apiClient.post(`/users/${id}/reset-password`, { newPassword });
+}
+
+export async function resetUserMfa(id: string): Promise<void> {
+  await apiClient.post(`/users/${id}/mfa/reset`);
 }
