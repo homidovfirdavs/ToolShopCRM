@@ -117,8 +117,12 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
-    options.Password.RequiredLength = 8;
+    // T2c: length matters, forced character classes do not. Common/obvious passwords are rejected by ToolShopPasswordValidator.
+    options.Password.RequiredLength = 12;
     options.Password.RequireNonAlphanumeric = false;
+    options.Password.RequireDigit = false;
+    options.Password.RequireLowercase = false;
+    options.Password.RequireUppercase = false;
 
     // Login protection (brute-force lockout)
     options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
@@ -126,6 +130,7 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
     options.Lockout.AllowedForNewUsers = true;
 })
     .AddEntityFrameworkStores<AppDbContext>()
+    .AddPasswordValidator<ToolShopPasswordValidator>()
     .AddDefaultTokenProviders();
 
 var jwtKey = builder.Configuration["Jwt:Key"]
