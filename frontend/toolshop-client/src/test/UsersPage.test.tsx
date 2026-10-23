@@ -171,12 +171,13 @@ describe("UsersPage", () => {
 });
 
 describe("password rule and navigation", () => {
-  it("isStrongPassword mirrors the server rule", () => {
-    expect(isStrongPassword("Abcdef1x")).toBe(true);
-    expect(isStrongPassword("abcdef1x")).toBe(false);
-    expect(isStrongPassword("ABCDEF1X")).toBe(false);
-    expect(isStrongPassword("Abcdefgh")).toBe(false);
+  it("isStrongPassword only checks the length (12..128); the server rejects obvious passwords", () => {
+    expect(isStrongPassword("blue river walks past quiet hills")).toBe(true);   // phrase: no digits, no capitals
+    expect(isStrongPassword("abcdefghijkl")).toBe(true);                         // exactly 12
+    expect(isStrongPassword("Abcdef1-xyz")).toBe(false);                         // 11 characters
     expect(isStrongPassword("Ab1")).toBe(false);
+    expect(isStrongPassword("a".repeat(128))).toBe(true);
+    expect(isStrongPassword("a".repeat(129))).toBe(false);
   });
 
   it("the Users link requires the Users.Manage permission", () => {

@@ -18,10 +18,12 @@ function Read-Plain($prompt) {
   try { [Runtime.InteropServices.Marshal]::PtrToStringAuto($b) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }
 }
 
-$p1 = Read-Plain "New password (min 8 chars)"
+$p1 = Read-Plain "New password (min 12 chars; a long phrase is best)"
 $p2 = Read-Plain "Repeat password"
 if ($p1 -ne $p2) { throw "Passwords do not match." }
-if ($p1.Length -lt 8) { throw "Password must be at least 8 characters." }
+if ($p1.Length -lt 12) { throw "Password must be at least 12 characters." }
+if ($p1.Length -gt 128) { throw "Password must be at most 128 characters." }
+Write-Host "Note: this script writes the hash directly and does NOT check the common-password rules of the API. Do not use obvious passwords." -ForegroundColor Yellow
 
 # ASP.NET Identity V3 format: 0x01 | prf(1=HMACSHA256) | iterations | saltLen | salt | subkey(32)
 $iter = 100000
