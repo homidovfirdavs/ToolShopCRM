@@ -49,7 +49,7 @@ public class InventoryController : ControllerBase
     // ---------- Stock mutations ----------
 
     [HttpPost("stock-in")]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.InventoryAdjust)]
     public async Task<IActionResult> StockIn([FromBody] StockMutationRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -68,7 +68,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpPost("stock-out")]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.InventoryAdjust)]
     public async Task<IActionResult> StockOut([FromBody] StockMutationRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -93,7 +93,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpPost("adjustment")]
-    [Authorize(Roles = "Admin,Manager,Warehouse")]
+    [Authorize(Policy = Permissions.InventoryAdjust)]
     public async Task<IActionResult> Adjustment([FromBody] AdjustmentRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -130,6 +130,7 @@ public class InventoryController : ControllerBase
     // ---------- Stock views ----------
 
     [HttpGet("stock")]
+    [Authorize(Policy = Permissions.InventoryStockLookup)]
     public async Task<IActionResult> GetStock(
         [FromQuery] string? search,
         [FromQuery] int? categoryId,
@@ -200,6 +201,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("stock/{productId:int}")]
+    [Authorize(Policy = Permissions.InventoryStockLookup)]
     public async Task<IActionResult> GetSingleStock(int productId)
     {
         var product = await _db.Products
@@ -227,6 +229,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("low-stock")]
+    [Authorize(Policy = Permissions.InventoryStockLookup)]
     public async Task<IActionResult> GetLowStock()
     {
         var products = await _db.Products
@@ -253,6 +256,7 @@ public class InventoryController : ControllerBase
     }
 
     [HttpGet("out-of-stock")]
+    [Authorize(Policy = Permissions.InventoryStockLookup)]
     public async Task<IActionResult> GetOutOfStock()
     {
         var products = await _db.Products

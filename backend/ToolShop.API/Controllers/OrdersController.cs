@@ -15,7 +15,7 @@ namespace ToolShop.API.Controllers;
 
 [ApiController]
 [Route("api/orders")]
-[Authorize(Roles = "Admin,Manager,Cashier")]
+[Authorize]
 public class OrdersController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -155,6 +155,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = Permissions.SalesView)]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
         [FromQuery] OrderStatus? status,
@@ -227,6 +228,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.SalesView)]
     public async Task<IActionResult> GetById(int id)
     {
         var order = await _db.Orders
@@ -281,7 +283,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager,Cashier")]
+    [Authorize(Policy = Permissions.SalesCreate)]
     public async Task<IActionResult> Create([FromBody] CreateOrderRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -332,7 +334,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Manager,Cashier")]
+    [Authorize(Policy = Permissions.SalesCreate)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateOrderRequest request)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -387,7 +389,7 @@ public class OrdersController : ControllerBase
     /// nothing; the same key with a different request is 409 IDEMPOTENCY_KEY_REUSED.
     /// </summary>
     [HttpPost("{id:int}/complete")]
-    [Authorize(Roles = "Admin,Manager,Cashier")]
+    [Authorize(Policy = Permissions.SalesCreate)]
     public async Task<IActionResult> Complete(int id, [FromBody] CompleteOrderRequest? request = null)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -480,7 +482,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id:int}/cancel")]
-    [Authorize(Roles = "Admin,Manager,Cashier")]
+    [Authorize(Policy = Permissions.SalesCancel)]
     public async Task<IActionResult> Cancel(int id)
     {
         var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == id);
@@ -577,6 +579,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id:int}/payments")]
+    [Authorize(Policy = Permissions.SalesView)]
     public async Task<IActionResult> GetPayments(int id)
     {
         var order = await _db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id);
