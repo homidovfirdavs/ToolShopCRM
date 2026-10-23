@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.API.DTOs.Catalog;
+using ToolShop.Domain.Authorization;
 using ToolShop.Domain.Entities.Catalog;
 using ToolShop.Infrastructure.Audit;
 using ToolShop.Infrastructure.Persistence;
@@ -61,6 +62,7 @@ public class ProductsController : ControllerBase
     private bool CanSeeCost => User.IsInRole("Admin") || User.IsInRole("Manager") || User.IsInRole("Warehouse");
 
     [HttpGet]
+    [Authorize(Policy = Permissions.ProductsView)]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
         [FromQuery] int? categoryId,
@@ -139,6 +141,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.ProductsView)]
     public async Task<IActionResult> GetById(int id)
     {
         var product = await _db.Products
@@ -158,7 +161,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.ProductsCreate)]
     public async Task<IActionResult> Create([FromBody] CreateProductRequest request)
     {
         if (!ModelState.IsValid)
@@ -227,7 +230,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.ProductsUpdate)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateProductRequest request)
     {
         if (!ModelState.IsValid)
@@ -310,7 +313,7 @@ public class ProductsController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.ProductsDelete)]
     public async Task<IActionResult> Deactivate(int id)
     {
         var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == id);

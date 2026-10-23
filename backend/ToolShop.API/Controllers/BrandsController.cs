@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.API.DTOs.Catalog;
+using ToolShop.Domain.Authorization;
 using ToolShop.Domain.Entities.Catalog;
 using ToolShop.Infrastructure.Audit;
 using ToolShop.Infrastructure.Persistence;
@@ -33,6 +34,7 @@ public class BrandsController : ControllerBase
     };
 
     [HttpGet]
+    [Authorize(Policy = Permissions.ProductsView)]
     public async Task<IActionResult> GetAll()
     {
         var brands = await _db.Brands
@@ -45,6 +47,7 @@ public class BrandsController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.ProductsView)]
     public async Task<IActionResult> GetById(int id)
     {
         var brand = await _db.Brands.AsNoTracking()
@@ -59,7 +62,7 @@ public class BrandsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.BrandsManage)]
     public async Task<IActionResult> Create([FromBody] CreateBrandRequest request)
     {
         if (!ModelState.IsValid)
@@ -94,7 +97,7 @@ public class BrandsController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.BrandsManage)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateBrandRequest request)
     {
         if (!ModelState.IsValid)
@@ -131,7 +134,7 @@ public class BrandsController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.BrandsManage)]
     public async Task<IActionResult> Deactivate(int id)
     {
         var brand = await _db.Brands.FirstOrDefaultAsync(b => b.Id == id);

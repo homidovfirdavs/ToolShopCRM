@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ToolShop.API.DTOs.Catalog;
+using ToolShop.Domain.Authorization;
 using ToolShop.Domain.Entities.Catalog;
 using ToolShop.Infrastructure.Audit;
 using ToolShop.Infrastructure.Persistence;
@@ -43,6 +44,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = Permissions.ProductsView)]
     public async Task<IActionResult> GetAll()
     {
         var categories = await _db.Categories
@@ -75,6 +77,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpGet("{id:int}")]
+    [Authorize(Policy = Permissions.ProductsView)]
     public async Task<IActionResult> GetById(int id)
     {
         var category = await _db.Categories.AsNoTracking()
@@ -89,7 +92,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.CategoriesManage)]
     public async Task<IActionResult> Create([FromBody] CreateCategoryRequest request)
     {
         if (!ModelState.IsValid)
@@ -127,7 +130,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.CategoriesManage)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateCategoryRequest request)
     {
         if (!ModelState.IsValid)
@@ -167,7 +170,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = Permissions.CategoriesManage)]
     public async Task<IActionResult> Deactivate(int id)
     {
         var category = await _db.Categories.FirstOrDefaultAsync(c => c.Id == id);
