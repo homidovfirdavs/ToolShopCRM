@@ -29,6 +29,7 @@ const PosPage = lazy(() => import("./pages/PosPage"));
 const OrdersPage = lazy(() => import("./pages/OrdersPage"));
 const OrderDetailsPage = lazy(() => import("./pages/OrderDetailsPage"));
 const DebtsPage = lazy(() => import("./pages/DebtsPage"));
+const CashShiftPage = lazy(() => import("./pages/CashShiftPage"));
 const PaymentsPage = lazy(() => import("./pages/PaymentsPage"));
 const ExpensesPage = lazy(() => import("./pages/ExpensesPage"));
 const ExpenseFormPage = lazy(() => import("./pages/ExpenseFormPage"));
@@ -86,6 +87,7 @@ function App() {
                   <Route path="/orders" element={<Guard permission="Sales.View"><OrdersPage /></Guard>} />
                   <Route path="/orders/:id" element={<Guard permission="Sales.View"><OrderDetailsPage /></Guard>} />
                   <Route path="/debts" element={<Guard permission="Sales.View"><DebtsPage /></Guard>} />
+                  <Route path="/cash-shift" element={<Guard permission="CashShifts.View"><CashShiftPage /></Guard>} />
                   <Route path="/payments" element={<Guard permission="Sales.View"><PaymentsPage /></Guard>} />
                   <Route path="/expenses" element={<Guard permission="Expenses.View"><ExpensesPage /></Guard>} />
                   <Route path="/expenses/new" element={<Guard permission="Expenses.View"><ExpenseFormPage /></Guard>} />
