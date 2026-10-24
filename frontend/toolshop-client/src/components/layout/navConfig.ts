@@ -5,6 +5,7 @@ import {
   Users,
   CreditCard,
   Wallet,
+  Landmark,
   Package,
   Layers,
   Tag,
@@ -47,6 +48,7 @@ export const navGroups: NavGroup[] = [
       { to: "/customers", labelKey: "nav.customers", icon: Users, permission: "Sales.View" },
       { to: "/payments", labelKey: "nav.payments", icon: CreditCard, permission: "Sales.View" },
       { to: "/debts", labelKey: "nav.debts", icon: Wallet, permission: "Sales.View" },
+      { to: "/cash-shift", labelKey: "nav.cash", icon: Landmark, permission: "CashShifts.View" },
     ],
   },
   {
