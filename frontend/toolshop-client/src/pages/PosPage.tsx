@@ -436,6 +436,8 @@ export default function PosPage() {
       } else if (errorCode(err) === "WALKIN_FULL_PAYMENT_REQUIRED") {
         setError(t("pos.errWalkInFull"));
         setWalkInHint(true);
+      } else if (errorCode(err) === "NO_OPEN_CASH_SHIFT") {
+        setError(t("cash.err.noOpenShift"));
       } else if (errorShortages(err).length > 0) {
         const list = errorShortages(err)
           .map((s) => `${s.productName} (${t("pos.stockHave")} ${formatNumber(s.available)}, ${t("pos.stockNeed")} ${formatNumber(s.requested)})`)

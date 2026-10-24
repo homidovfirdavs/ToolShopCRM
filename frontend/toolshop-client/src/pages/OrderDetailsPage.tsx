@@ -155,7 +155,9 @@ export default function OrderDetailsPage() {
         setModalError(
           errorCode(err) === "IDEMPOTENCY_KEY_REUSED"
             ? t("ord.err.IDEMPOTENCY_KEY_REUSED")
-            : (errorMessage(err) ?? t("ord.paymentFailed")),
+            : errorCode(err) === "NO_OPEN_CASH_SHIFT"
+              ? t("cash.err.noOpenShift")
+              : (errorMessage(err) ?? t("ord.paymentFailed")),
         );
       }
     } finally {
@@ -250,7 +252,9 @@ export default function OrderDetailsPage() {
         setReturnError(
           code === "IDEMPOTENCY_KEY_REUSED"
             ? t("ord.err.RETURN_KEY_REUSED")
-            : code && RETURN_ERROR_CODES.includes(code)
+            : code === "NO_OPEN_CASH_SHIFT"
+              ? t("cash.err.noOpenShift")
+              : code && RETURN_ERROR_CODES.includes(code)
               ? t(`ord.err.${code}`)
               : (errorMessage(err) ?? t("ord.returnFailed")),
         );

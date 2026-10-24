@@ -461,6 +461,10 @@ public class OrdersController : ControllerBase
         {
             return BadRequest(new { message = ex.Message, code = "WALKIN_FULL_PAYMENT_REQUIRED" });
         }
+        catch (ToolShop.Infrastructure.Cash.NoOpenCashShiftException ex)
+        {
+            return Conflict(new { code = "NO_OPEN_CASH_SHIFT", message = ex.Message });
+        }
         catch (PaymentOverpaymentException ex)
         {
             return Conflict(new
@@ -575,6 +579,10 @@ public class OrdersController : ControllerBase
         catch (InvalidReturnException ex)
         {
             return BadRequest(new { message = ex.Message, code = ex.Code });
+        }
+        catch (ToolShop.Infrastructure.Cash.NoOpenCashShiftException ex)
+        {
+            return Conflict(new { code = "NO_OPEN_CASH_SHIFT", message = ex.Message });
         }
     }
 

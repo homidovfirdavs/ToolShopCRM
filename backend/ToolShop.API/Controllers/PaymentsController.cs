@@ -237,6 +237,10 @@ public class PaymentsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (ToolShop.Infrastructure.Cash.NoOpenCashShiftException ex)
+        {
+            return Conflict(new { code = "NO_OPEN_CASH_SHIFT", message = ex.Message });
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });

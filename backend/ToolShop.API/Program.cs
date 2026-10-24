@@ -203,6 +203,16 @@ builder.Services.AddScoped<ToolShop.Infrastructure.Purchases.PurchaseService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Sales.OrderService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Payments.PaymentService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Finance.ExpenseService>();
+// Cash shifts: OFF unless CashShifts:Enabled=true (the database migration must be applied first). Read lazily so the final
+// configuration (including test overrides) is used.
+builder.Services.AddSingleton(sp =>
+{
+    var section = sp.GetRequiredService<IConfiguration>().GetSection("CashShifts");
+    var options = new ToolShop.Infrastructure.Cash.CashShiftOptions();
+    section.Bind(options);
+    return options;
+});
+builder.Services.AddScoped<ToolShop.Infrastructure.Cash.CashShiftService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Finance.FinanceService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Dashboard.DashboardService>();
 builder.Services.AddScoped<ToolShop.Infrastructure.Reports.ReportsService>();
@@ -315,6 +325,11 @@ using (var scope = app.Services.CreateScope())
 
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await ToolShop.Infrastructure.Finance.ExpenseCategorySeeder.SeedAsync(dbContext);
+
+    if (scope.ServiceProvider.GetRequiredService<ToolShop.Infrastructure.Cash.CashShiftOptions>().Enabled)
+    {
+        await ToolShop.Infrastructure.Cash.CashRegisterSeeder.SeedAsync(dbContext);
+    }
 }
 
 app.Run();

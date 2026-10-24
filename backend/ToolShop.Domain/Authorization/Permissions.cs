@@ -40,6 +40,12 @@ public static class Permissions
     public const string SuppliersManage = "Suppliers.Manage";
     public const string SuppliersDeactivate = "Suppliers.Deactivate";
 
+    // Cash shifts (Phase B)
+    public const string CashShiftsView = "CashShifts.View";           // see the open shift and one's own shifts
+    public const string CashShiftsViewAll = "CashShifts.ViewAll";     // see every shift
+    public const string CashShiftsOperate = "CashShifts.Operate";     // open / close one's own shift, cash in / out
+    public const string CashShiftsReview = "CashShifts.Review";       // close any shift, void a movement, review a difference
+
     public static readonly Dictionary<string, string[]> RolePermissions = new()
     {
         ["Admin"] =
@@ -51,7 +57,8 @@ public static class Permissions
             FinanceProfitView, ExpensesView, ExpensesCreate, ExpensesUpdate, ExpensesVoid,
             BrandsManage, CategoriesManage, CustomersView, CustomersManage, CustomersDeactivate,
             PaymentsVoid, DebtsWalkInExceptions, InventoryStockLookup,
-            PurchasesManage, PurchasesConfirm, SuppliersManage, SuppliersDeactivate
+            PurchasesManage, PurchasesConfirm, SuppliersManage, SuppliersDeactivate,
+            CashShiftsView, CashShiftsViewAll, CashShiftsOperate, CashShiftsReview
         ],
         ["Manager"] =
         [
@@ -62,13 +69,15 @@ public static class Permissions
             FinanceProfitView, ExpensesView, ExpensesCreate, ExpensesUpdate,
             BrandsManage, CategoriesManage, CustomersView, CustomersManage, CustomersDeactivate,
             PaymentsVoid, DebtsWalkInExceptions, InventoryStockLookup,
-            PurchasesManage, PurchasesConfirm, SuppliersManage, SuppliersDeactivate
+            PurchasesManage, PurchasesConfirm, SuppliersManage, SuppliersDeactivate,
+            CashShiftsView, CashShiftsViewAll, CashShiftsOperate, CashShiftsReview
         ],
         ["Cashier"] =
         [
             ProductsView,
             SalesView, SalesCreate, SalesCancel,
-            CustomersView, CustomersManage, InventoryStockLookup
+            CustomersView, CustomersManage, InventoryStockLookup,
+            CashShiftsView, CashShiftsOperate
         ],
         ["Warehouse"] =
         [
